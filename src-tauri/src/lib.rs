@@ -7,11 +7,6 @@ mod settings;
 mod shortcut;
 mod store;
 
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn AXIsProcessTrusted() -> bool;
-}
-
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -79,12 +74,9 @@ pub fn run() {
                     .build(app)?;
             }
 
-            // 辅助功能权限检测：全局快捷键需要此权限，每次新版本安装后可能被 macOS 重置
-            if !unsafe { AXIsProcessTrusted() } {
-                println!("[clipboardx] 辅助功能权限未授予，全局快捷键无法工作，请在系统设置中授权");
-                let _ = std::process::Command::new("open")
-                    .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-                    .spawn();
+            // 辅助功能权限检测（仅记录，不自动弹窗打扰用户；粘贴失败时前端会提示）
+            if !shortcut::ax_is_trusted() {
+                println!("[clipboardx] 辅助功能权限未授予：模拟粘贴不可用，请在系统设置中授权后重启应用");
             }
 
             // 全局快捷键：从设置读取（默认 Command+Shift+V），重启后保持用户自定义值
@@ -115,6 +107,7 @@ pub fn run() {
             commands::set_pinned,
             commands::delete_entry,
             commands::paste_entry,
+            commands::get_accessibility_status,
             commands::get_settings,
             commands::update_settings,
             commands::show_settings,

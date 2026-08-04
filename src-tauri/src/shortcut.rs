@@ -5,6 +5,16 @@ use std::sync::Mutex;
 use tauri::{AppHandle, LogicalPosition, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+}
+
+/// 当前进程是否已获得 macOS 辅助功能权限。
+pub fn ax_is_trusted() -> bool {
+    unsafe { AXIsProcessTrusted() }
+}
+
 /// 唤起弹窗时记录的前台应用 pid，粘贴时用于把焦点还给它。
 static LAST_FRONT_APP_PID: AtomicI32 = AtomicI32::new(0);
 

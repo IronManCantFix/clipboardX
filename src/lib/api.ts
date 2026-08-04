@@ -52,6 +52,7 @@ export const api = {
   setPinned: (id: number, pinned: boolean) => invoke('set_pinned', { id, pinned }),
   delete: (id: number) => invoke('delete_entry', { id }),
   paste: (id: number) => invoke('paste_entry', { id }),
+  getAccessibilityStatus: () => invoke<boolean>('get_accessibility_status'),
   getSettings: () => invoke<Settings>('get_settings'),
   showSettings: () => invoke('show_settings'),
   positionPopover: () => invoke('position_popover'),

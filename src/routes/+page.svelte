@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { message } from '@tauri-apps/plugin-dialog';
   import { api, onNewEntry, type Entry, type Settings } from '../lib/api';
   import { filterEntries } from '../lib/search';
   import TabBar from '../components/TabBar.svelte';
@@ -166,7 +168,20 @@
       await api.paste(entry.id);
       getCurrentWindow().hide();
     } catch (err) {
-      console.error('paste failed:', err);
+      const msg = String(err).replace(/^Error:\s*/, '');
+      if (msg.includes('辅助功能')) {
+        // 未授权辅助功能：隐藏弹窗，引导用户在系统设置中开启
+        getCurrentWindow().hide();
+        void openUrl(
+          'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+        );
+        void message(
+          `请在打开的「系统设置 → 隐私与安全性 → 辅助功能」中：\n1. 找到 ClipboardX 并打开开关\n2. 完全退出 ClipboardX（点菜单栏图标 → 退出）\n3. 重新打开后重试`,
+          { title: '需要辅助功能权限', kind: 'info' },
+        );
+      } else {
+        console.error('paste failed:', err);
+      }
     }
   }
 </script>

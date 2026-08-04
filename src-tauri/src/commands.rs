@@ -102,7 +102,17 @@ pub fn paste_entry(
     if e.kind == crate::models::EntryType::File {
         return Ok(());
     }
+    // 模拟按键需要辅助功能权限：未授权时给出明确错误，由前端引导用户开启
+    if !crate::shortcut::ax_is_trusted() {
+        return Err("辅助功能权限未开启：请在系统设置 → 隐私与安全性 → 辅助功能 中允许 ClipboardX，然后完全退出并重启应用".into());
+    }
     crate::paste::send_cmd_v()
+}
+
+/// 查询当前辅助功能权限状态（前端用于展示引导）。
+#[tauri::command]
+pub fn get_accessibility_status() -> bool {
+    crate::shortcut::ax_is_trusted()
 }
 
 #[tauri::command]
