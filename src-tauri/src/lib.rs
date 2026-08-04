@@ -4,24 +4,11 @@ mod listener;
 mod models;
 mod paste;
 mod settings;
+mod shortcut;
 mod store;
 
-use objc2::MainThreadMarker;
-use tauri::{LogicalPosition, Manager};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-
-/// 当前鼠标位置（逻辑坐标，左上原点），用于弹窗定位。
-fn cursor_position() -> Option<(f64, f64)> {
-    objc2::rc::autoreleasepool(|_| {
-        let p = objc2_app_kit::NSEvent::mouseLocation();
-        let marker = MainThreadMarker::new()?;
-        let screen = objc2_app_kit::NSScreen::mainScreen(marker)?;
-        let frame = screen.frame();
-        let x = p.x - frame.origin.x;
-        let y = frame.origin.y + frame.size.height - p.y;
-        Some((x, y))
-    })
-}
+use tauri::Manager;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,20 +28,53 @@ pub fn run() {
             });
             app.manage(state.clone());
 
+            // 设置窗口（隐藏，由托盘/齿轮打开）。dev 下 SvelteKit 路由为 /settings，
+            // 生产构建产物为 settings.html
+            let settings_url = if cfg!(debug_assertions) {
+                tauri::WebviewUrl::App("/settings".into())
+            } else {
+                tauri::WebviewUrl::App("settings.html".into())
+            };
+            let _ = tauri::WebviewWindowBuilder::new(app, "settings", settings_url)
+            .title("ClipboardX 设置")
+            .inner_size(430.0, 560.0)
+            .resizable(false)
+            .visible(false)
+            .build()?;
+
+            // 托盘：左键/菜单弹出设置窗口
+            {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::TrayIconBuilder;
+                let show_settings =
+                    MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
+                let quit =
+                    MenuItem::with_id(app, "quit", "退出 ClipboardX", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show_settings, &quit])?;
+                let icon = app.default_window_icon().cloned();
+                let mut builder = TrayIconBuilder::with_id("main-tray")
+                    .menu(&menu)
+                    .show_menu_on_left_click(true)
+                    .on_menu_event(|app, event| match event.id().as_ref() {
+                        "settings" => {
+                            if let Some(win) = app.get_webview_window("settings") {
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                            }
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    });
+                if let Some(icon) = icon {
+                    builder = builder.icon(icon);
+                }
+                builder.build(app)?;
+            }
+
             // 全局快捷键：唤起弹窗（默认 Command+Shift+V）
             let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyV);
             app.global_shortcut()
-                .on_shortcut(shortcut, move |app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        if let Some(win) = app.get_webview_window("main") {
-                            if let Some((x, y)) = cursor_position() {
-                                let _ = win.set_position(LogicalPosition::new(x, y));
-                            }
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
-                    }
-                })
+                .on_shortcut(shortcut, shortcut::shortcut_handler())
                 .map_err(|e| format!("register shortcut failed: {e}"))?;
 
             // 启动剪贴板监听线程

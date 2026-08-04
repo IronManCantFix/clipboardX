@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
   import { api, onNewEntry, type Entry } from '../lib/api';
   import { filterEntries } from '../lib/search';
   import TabBar from '../components/TabBar.svelte';
@@ -57,6 +58,10 @@
     }
   }
 
+  function openSettings() {
+    void WebviewWindow.getByLabel('settings').then((w) => w?.show());
+  }
+
   async function paste(entry: Entry) {
     try {
       await api.paste(entry.id);
@@ -72,6 +77,7 @@
 <div class="pop">
   <div class="search">
     <input bind:this={searchInput} bind:value={query} placeholder="搜索剪贴板…" />
+    <button class="gear" onclick={openSettings} title="设置">⚙︎</button>
   </div>
   <TabBar {tab} pinnedCount={entries.filter((e) => e.pinned).length} onswitch={switchTab} />
   <div class="list">
@@ -94,3 +100,25 @@
     <span>⌘P 固定 · ⌫ 删除 · Esc 关闭</span>
   </div>
 </div>
+
+<style>
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .gear {
+    background: none;
+    border: none;
+    font-size: 15px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    padding: 3px 4px;
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+  .gear:hover {
+    color: var(--text-primary);
+    background: rgba(120, 120, 128, 0.15);
+  }
+</style>

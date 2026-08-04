@@ -85,10 +85,19 @@ pub fn get_settings(state: tauri::State<'_, AppState>) -> Result<Settings, Strin
 
 #[tauri::command]
 pub fn update_settings(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
-    let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
-    guard.settings = settings;
-    guard.save().map_err(|e| e.to_string())
+    let old_shortcut = state.settings.lock().map_err(|e| e.to_string())?.settings.shortcut.clone();
+    {
+        let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+        guard.settings = settings;
+        guard.save().map_err(|e| e.to_string())?;
+    }
+    let new_shortcut = state.settings.lock().map_err(|e| e.to_string())?.settings.shortcut.clone();
+    if new_shortcut != old_shortcut {
+        crate::shortcut::register_shortcut(&app, &new_shortcut)?;
+    }
+    Ok(())
 }
