@@ -13,7 +13,6 @@ extern "C" {
 }
 
 use tauri::Manager;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -32,7 +31,10 @@ pub fn run() {
                 let hide_win = main_win.clone();
                 main_win.on_window_event(move |event| {
                     if let tauri::WindowEvent::Focused(false) = event {
-                        let _ = hide_win.hide();
+                        // 唤起保护期内忽略失焦，避免 show 后聚焦未稳定时被误隐藏
+                        if !crate::shortcut::just_shown() {
+                            let _ = hide_win.hide();
+                        }
                     }
                 });
             }
@@ -85,10 +87,16 @@ pub fn run() {
                     .spawn();
             }
 
-            // 全局快捷键：唤起弹窗（默认 Command+Shift+V）
-            let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyV);
-            app.global_shortcut()
-                .on_shortcut(shortcut, shortcut::shortcut_handler())
+            // 全局快捷键：从设置读取（默认 Command+Shift+V），重启后保持用户自定义值
+            let shortcut_str = app
+                .state::<crate::commands::AppState>()
+                .settings
+                .lock()
+                .unwrap()
+                .settings
+                .shortcut
+                .clone();
+            shortcut::register_shortcut(app.handle(), &shortcut_str)
                 .map_err(|e| format!("register shortcut failed: {e}"))?;
 
             // 启动剪贴板监听线程

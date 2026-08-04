@@ -1,6 +1,6 @@
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplicationActivationOptions, NSApplicationActivationPolicy};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, LogicalPosition, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
@@ -10,6 +10,26 @@ static LAST_FRONT_APP_PID: AtomicI32 = AtomicI32::new(0);
 
 /// 唤起时记录的鼠标位置，用于弹窗避让定位。
 static LAST_CURSOR: Mutex<Option<(f64, f64)>> = Mutex::new(None);
+
+/// 最近一次主动唤起弹窗的时间（毫秒），用于聚焦保护期判断。
+static LAST_SHOWN_AT: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 记录主动唤起时间；此后短暂时间内即使窗口未获得焦点也不应隐藏。
+pub fn mark_shown() {
+    LAST_SHOWN_AT.store(now_ms(), Ordering::SeqCst);
+}
+
+/// 是否处于唤起保护期（刚主动显示过，聚焦还没稳定）。
+pub fn just_shown() -> bool {
+    now_ms().saturating_sub(LAST_SHOWN_AT.load(Ordering::SeqCst)) < 400
+}
 
 /// 设为菜单栏应用（不显示 Dock 图标）。
 pub fn set_accessory_policy() {
@@ -90,8 +110,15 @@ pub fn show_popover(app: &AppHandle) {
         } else {
             let _ = position_window(&win, None);
         }
-        let _ = win.show();
-        let _ = win.set_focus();
+        // 标记唤起保护期，并推迟 show/set_focus 到下一帧：
+        // accessory app 在同一帧内 set_focus 无效，且窗口未聚焦会触发
+        // Focused(false) → hide 竞态（弹窗一闪而过）
+        mark_shown();
+        let w = win;
+        let _ = app.run_on_main_thread(Box::new(move || {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }));
     }
 }
 
@@ -171,5 +198,7 @@ pub fn register_shortcut(app: &AppHandle, shortcut_str: &str) -> Result<(), Stri
     let _ = app.global_shortcut().unregister_all();
     app.global_shortcut()
         .on_shortcut(shortcut, shortcut_handler())
-        .map_err(|e| format!("register shortcut failed: {e}"))
+        .map_err(|e| format!("register shortcut failed: {e}"))?;
+    println!("[clipboardx] global shortcut registered: {shortcut_str}");
+    Ok(())
 }
