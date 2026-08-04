@@ -26,7 +26,7 @@
   let recording = $state(false);
   let status = $state('');
   let tab = $state('general');
-  let entries = $state<import('../../lib/api').Entry[]>([]);
+
 
   const tabs = [
     { id: 'general', label: '常规', icon: 'sliders' },
@@ -55,20 +55,41 @@
     void getVersion().then((v) => (version = v)).catch(() => {});
   });
 
-  function switchTab(id: string) {
-    const leaving = tab === 'storage' && id !== 'storage';
-    tab = id;
-    if (leaving) {
-      entries = []; // 离开存储页时释放 DOM
-      return;
+  let storageLoaded = $state(false);
+  let entries = $state<import('../../lib/api').Entry[]>([]);
+  let historyOpen = $state(false);
+
+  const MAX_DISPLAY = 50;
+
+  const entryIconPaths: Record<string, string> = {
+    text: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 13h6M9 17h4"/>',
+    url: '<path d="M10 14l4-4"/><path d="M8 12l-2 2a4 4 0 006 6l2-2"/><path d="M16 12l2-2a4 4 0 00-6-6l-2 2"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-9 9"/>',
+    file: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+    rtf: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 11h6M9 15h6M9 19h3"/>',
+  };
+
+  async function toggleHistory() {
+    if (historyOpen) {
+      historyOpen = false;
+      entries = [];
+    } else {
+      entries = await api.list();
+      historyOpen = true;
     }
-    if (id === 'storage') {
-      stats = null; // 重置以显示 loading，避免渲染旧数据
-      // 延迟到下一帧，让 tab 切换先完成渲染
-      requestAnimationFrame(() => {
-        void loadStats();
-        void loadHistory();
-      });
+  }
+
+  async function deleteOne(id: number) {
+    await api.delete(id);
+    entries = entries.filter((e) => e.id !== id);
+    void loadStats();
+  }
+
+  function switchTab(id: string) {
+    tab = id;
+    if (id === 'storage' && !storageLoaded) {
+      storageLoaded = true;
+      void loadStats();
     }
   }
 
@@ -96,19 +117,6 @@
     void save();
   }
 
-  const MAX_DISPLAY = 30;
-
-  async function loadHistory() {
-    const all = await api.list();
-    entries = all;
-  }
-
-  async function deleteOne(id: number) {
-    await api.delete(id);
-    await loadHistory();
-    void loadStats();
-  }
-
   async function clearHistory() {
     const ok = await confirm('确定清空历史记录吗？固定条目会保留。', {
       title: 'ClipboardX',
@@ -117,17 +125,11 @@
     if (!ok) return;
     const n = await api.clearHistory();
     status = `已清空 ${n} 条记录`;
-    await loadHistory();
+    entries = [];
     void loadStats();
   }
 
-  const entryIconPaths: Record<string, string> = {
-    text: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 13h6M9 17h4"/>',
-    url: '<path d="M10 14l4-4"/><path d="M8 12l-2 2a4 4 0 006 6l2-2"/><path d="M16 12l2-2a4 4 0 00-6-6l-2 2"/>',
-    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-9 9"/>',
-    file: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
-    rtf: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 11h6M9 15h6M9 19h3"/>',
-  };
+
 
   function startRecord() {
     recording = true;
@@ -218,7 +220,7 @@
   </aside>
 
   <main class="panel">
-    {#if tab === 'general'}
+    <div hidden={tab !== "general"}>
       <section>
         <h2>常规</h2>
         <div class="card">
@@ -250,7 +252,8 @@
         </div>
       </section>
 
-    {:else if tab === 'appearance'}
+    </div>
+    <div hidden={tab !== "appearance"}>
       <section>
         <h2>外观</h2>
         <div class="card">
@@ -308,7 +311,8 @@
         </div>
       </section>
 
-    {:else if tab === 'search'}
+    </div>
+    <div hidden={tab !== "search"}>
       <section>
         <h2>搜索与位置</h2>
         <div class="card">
@@ -341,7 +345,8 @@
         </div>
       </section>
 
-    {:else if tab === 'shortcut'}
+    </div>
+    <div hidden={tab !== "shortcut"}>
       <section>
         <h2>快捷键</h2>
         <div class="card">
@@ -361,8 +366,9 @@
         </div>
       </section>
 
-    {:else if tab === 'storage'}
-      <section>
+    </div>
+    <div hidden={tab !== "storage"}>
+      <section class="storage-section">
         <h2>存储</h2>
         {#if stats}
           <div class="stat-grid">
@@ -370,54 +376,79 @@
             <div class="stat"><b>{fmtSize(stats.images_size)}</b><span>图片缓存</span></div>
             <div class="stat"><b>{stats.entry_count}</b><span>历史条目</span></div>
           </div>
-          <div class="card">
-            <div class="field">
-              <span class="lbl">图片缓存位置</span>
+
+          <div class="card storage-card">
+            <div class="storage-row">
+              <div class="storage-info">
+                <span class="lbl">图片缓存</span>
+                <span class="hint">{fmtSize(stats.images_size)} · {stats.image_count} 个文件</span>
+              </div>
+              <button class="danger" onclick={clearImages}>清除缓存</button>
+            </div>
+            <div class="divider"></div>
+            <div class="storage-path">
+              <span class="hint">缓存位置</span>
               <div class="path" title={stats.images_dir}>{stats.images_dir}</div>
             </div>
-            <button class="danger" onclick={clearImages}>清除图片缓存</button>
           </div>
 
-          <div class="card history-card">
-            <div class="field row">
-              <div>
-                <span class="lbl">历史记录</span>
-                <p class="hint">{entries.length} 条{entries.length > MAX_DISPLAY ? ` · 仅显示最近 ${MAX_DISPLAY} 条` : ''} · 清空时保留固定项</p>
+          <div class="card storage-card">
+            <div class="storage-row">
+              <div class="storage-info">
+                <span class="lbl">清空历史记录</span>
+                <span class="hint">删除全部未固定条目，固定项会保留</span>
               </div>
               <button class="danger" onclick={clearHistory}>清空历史</button>
             </div>
-            <div class="entry-list">
-              {#each entries.slice(0, MAX_DISPLAY) as e (e.id)}
-                <div class="entry">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-                       stroke-linecap="round" stroke-linejoin="round" class="e-ico e-{e.type}">
-                    {@html entryIconPaths[e.type]}
-                  </svg>
-                  <span class="e-txt" title={e.content}>
-                    {e.type === 'image' ? '图片' : e.content}
-                  </span>
-                  {#if e.pinned}
-                    <svg class="e-pin" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M16 3l5 5-4 1-3 3 1 6-2 2-4-5-5 4-1-1 4-5-5-4 2-2 6 1 3-3 1-4z"/>
-                    </svg>
-                  {/if}
-                  <button class="e-del" aria-label="删除这条记录" title="删除"
-                          onclick={() => deleteOne(e.id)}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                         stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                  </button>
-                </div>
-              {:else}
-                <p class="hint">暂无剪贴板记录</p>
-              {/each}
+          </div>
+
+          <div class="card storage-card">
+            <div class="storage-row">
+              <div class="storage-info">
+                <span class="lbl">剪贴板记录</span>
+                <span class="hint">{historyOpen ? `${entries.length} 条` : '点击查看全部剪贴板记录'}</span>
+              </div>
+              <button class="keybtn" onclick={toggleHistory}>{historyOpen ? '收起' : '查看'}</button>
             </div>
+            {#if historyOpen}
+              <div class="divider"></div>
+              <div class="entry-list">
+                {#each entries.slice(0, MAX_DISPLAY) as e (e.id)}
+                  <div class="entry">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                         stroke-linecap="round" stroke-linejoin="round" class="e-ico e-{e.type}">
+                      {@html entryIconPaths[e.type]}
+                    </svg>
+                    <span class="e-txt" title={e.content}>
+                      {e.type === 'image' ? '图片' : e.content}
+                    </span>
+                    {#if e.pinned}
+                      <svg class="e-pin" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M16 3l5 5-4 1-3 3 1 6-2 2-4-5-5 4-1-1 4-5-5-4 2-2 6 1 3-3 1-4z"/>
+                      </svg>
+                    {/if}
+                    <button class="e-del" aria-label="删除" title="删除"
+                            onclick={() => deleteOne(e.id)}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                           stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                  </div>
+                {:else}
+                  <p class="hint" style="text-align:center;padding:12px 0">暂无剪贴板记录</p>
+                {/each}
+              </div>
+              {#if entries.length > MAX_DISPLAY}
+                <p class="hint" style="text-align:center;padding-top:6px">仅显示最近 {MAX_DISPLAY} 条</p>
+              {/if}
+            {/if}
           </div>
         {:else}
-          <p class="hint">读取存储信息中…</p>
+          <p class="hint" style="padding:20px 0;text-align:center">读取存储信息中…</p>
         {/if}
       </section>
 
-    {:else if tab === 'about'}
+    </div>
+    <div hidden={tab !== "about"}>
       <section>
         <h2>关于</h2>
         <div class="about-card">
@@ -445,7 +476,7 @@
           {/if}
         </div>
       </section>
-    {/if}
+    </div>
   </main>
 </div>
 
@@ -783,6 +814,37 @@
     background: rgba(255, 59, 48, 0.08);
   }
 
+  .storage-section .card + .card {
+    margin-top: 12px;
+  }
+  .storage-card {
+    padding: 16px 18px;
+  }
+  .storage-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .storage-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .storage-info .lbl {
+    font-weight: 500;
+    font-size: 13px;
+  }
+  .storage-info .hint {
+    margin: 0;
+  }
+  .storage-path {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
   .about-card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -834,12 +896,9 @@
   .about-links .gh-link:hover {
     background: rgba(10, 132, 255, 0.12);
   }
-  .history-card {
-    margin-top: 14px;
-  }
   .entry-list {
     margin-top: 12px;
-    max-height: 260px;
+    max-height: 300px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
