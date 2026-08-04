@@ -76,10 +76,11 @@ pub fn paste_entry(
         .map_err(|e| e.to_string())?
         .touch(id, now)
         .map_err(|e| e.to_string())?;
-    // 隐藏弹窗，让焦点回到唤起前的应用，再模拟 Cmd+V
+    // 隐藏弹窗，把焦点还给唤起前的前台应用，再模拟 Cmd+V
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
     }
+    crate::shortcut::activate_front_app();
     std::thread::sleep(std::time::Duration::from_millis(150));
     crate::paste::send_cmd_v()
 }
