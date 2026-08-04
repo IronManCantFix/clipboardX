@@ -38,22 +38,48 @@ pub fn write_back(e: &Entry) -> Result<(), String> {
 }
 
 /// 模拟 Cmd+V 粘贴到前台应用（需 macOS 辅助功能权限）。
-pub fn send_cmd_v() -> Result<(), String> {
-    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Meta, Direction::Press)
-        .map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Unicode('v'), Direction::Press)
-        .map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Unicode('v'), Direction::Release)
-        .map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Meta, Direction::Release)
-        .map_err(|e| e.to_string())?;
-    Ok(())
+
+#[repr(C)]
+struct CGEvent(std::ffi::c_void);
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventCreateKeyboardEvent(
+        source: *const std::ffi::c_void,
+        virtual_key: u16,
+        key_down: bool,
+    ) -> *mut CGEvent;
+    fn CGEventSetFlags(event: *mut CGEvent, flags: u64);
+    fn CGEventPost(tap: u32, event: *mut CGEvent);
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRelease(cf: *mut CGEvent);
+}
+
+const FLAG_COMMAND: u64 = 0x100_000;
+const HID_EVENT_TAP: u32 = 0;
+const KEY_V: u16 = 9;
+
+/// 模拟 Cmd+V 粘贴到前台应用（需 macOS 辅助功能权限）。
+/// 直接调用 CoreGraphics CGEvent，不依赖 enigo。
+/// 权限不足时 CGEvent 静默不生效——内容已写入剪贴板，用户可手动 Cmd+V。
+pub fn send_cmd_v() {
+    unsafe {
+        let down = CGEventCreateKeyboardEvent(std::ptr::null(), KEY_V, true);
+        if !down.is_null() {
+            CGEventSetFlags(down, FLAG_COMMAND);
+            CGEventPost(HID_EVENT_TAP, down);
+            CFRelease(down);
+        }
+        let up = CGEventCreateKeyboardEvent(std::ptr::null(), KEY_V, false);
+        if !up.is_null() {
+            CGEventSetFlags(up, FLAG_COMMAND);
+            CGEventPost(HID_EVENT_TAP, up);
+            CFRelease(up);
+        }
+    }
 }
 
 #[cfg(test)]
