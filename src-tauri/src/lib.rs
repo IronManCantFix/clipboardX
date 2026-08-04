@@ -114,6 +114,7 @@ pub fn run() {
             commands::show_settings,
             commands::get_storage_stats,
             commands::clear_images,
+            commands::clear_history,
             commands::get_autostart,
             commands::set_autostart,
             commands::check_for_updates,

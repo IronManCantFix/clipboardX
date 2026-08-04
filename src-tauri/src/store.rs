@@ -132,6 +132,10 @@ impl Store {
             .query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))
     }
 
+    pub fn delete_non_pinned(&self) -> rusqlite::Result<usize> {
+        self.conn.execute("DELETE FROM entries WHERE pinned = 0", [])
+    }
+
     pub fn delete_by_type(&self, kind: EntryType) -> rusqlite::Result<usize> {
         let kind_str = serde_json::to_string(&kind).unwrap().trim_matches('"').to_string();
         self.conn

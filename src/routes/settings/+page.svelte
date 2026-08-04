@@ -23,6 +23,7 @@
   let recording = $state(false);
   let status = $state('');
   let tab = $state('general');
+  let entries = $state<import('../../lib/api').Entry[]>([]);
 
   const tabs = [
     { id: 'general', label: '常规', icon: 'sliders' },
@@ -75,6 +76,36 @@
     settings[key] = value;
     void save();
   }
+
+  $effect(() => {
+    if (tab === 'storage') void loadHistory();
+  });
+
+  async function loadHistory() {
+    entries = await api.list();
+  }
+
+  async function deleteOne(id: number) {
+    await api.delete(id);
+    await loadHistory();
+    void loadStats();
+  }
+
+  async function clearHistory() {
+    if (!confirm('确定清空历史记录吗？固定条目会保留。')) return;
+    const n = await api.clearHistory();
+    status = `已清空 ${n} 条记录`;
+    await loadHistory();
+    void loadStats();
+  }
+
+  const entryIconPaths: Record<string, string> = {
+    text: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 13h6M9 17h4"/>',
+    url: '<path d="M10 14l4-4"/><path d="M8 12l-2 2a4 4 0 006 6l2-2"/><path d="M16 12l2-2a4 4 0 00-6-6l-2 2"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-9 9"/>',
+    file: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+    rtf: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 11h6M9 15h6M9 19h3"/>',
+  };
 
   function startRecord() {
     recording = true;
@@ -307,6 +338,41 @@
               <div class="path" title={stats.images_dir}>{stats.images_dir}</div>
             </div>
             <button class="danger" onclick={clearImages}>清除图片缓存</button>
+          </div>
+
+          <div class="card history-card">
+            <div class="field row">
+              <div>
+                <span class="lbl">历史记录</span>
+                <p class="hint">{entries.length} 条 · 清空时保留固定项</p>
+              </div>
+              <button class="danger" onclick={clearHistory}>清空历史</button>
+            </div>
+            <div class="entry-list">
+              {#each entries as e (e.id)}
+                <div class="entry">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                       stroke-linecap="round" stroke-linejoin="round" class="e-ico e-{e.type}">
+                    {@html entryIconPaths[e.type]}
+                  </svg>
+                  <span class="e-txt" title={e.content}>
+                    {e.type === 'image' ? '图片' : e.content}
+                  </span>
+                  {#if e.pinned}
+                    <svg class="e-pin" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M16 3l5 5-4 1-3 3 1 6-2 2-4-5-5 4-1-1 4-5-5-4 2-2 6 1 3-3 1-4z"/>
+                    </svg>
+                  {/if}
+                  <button class="e-del" aria-label="删除这条记录" title="删除"
+                          onclick={() => deleteOne(e.id)}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              {:else}
+                <p class="hint">暂无剪贴板记录</p>
+              {/each}
+            </div>
           </div>
         {:else}
           <p class="hint">读取存储信息中…</p>
@@ -729,6 +795,77 @@
   .about-links a:hover {
     text-decoration: underline;
   }
+  .history-card {
+    margin-top: 14px;
+  }
+  .entry-list {
+    margin-top: 12px;
+    max-height: 260px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .entry {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    transition: background 0.12s;
+  }
+  .entry:hover {
+    background: var(--bg);
+  }
+  .e-ico {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+  }
+  .e-text { color: #0a84ff; }
+  .e-url { color: #34c759; }
+  .e-image { color: #bf5af2; }
+  .e-file { color: #ff9f0a; }
+  .e-rtf { color: #64d2ff; }
+  .e-txt {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 12.5px;
+  }
+  .e-pin {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+    color: #ff9f0a;
+  }
+  .e-del {
+    border: none;
+    background: transparent;
+    color: var(--faint);
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.12s, background 0.12s, color 0.12s;
+  }
+  .entry:hover .e-del {
+    opacity: 1;
+  }
+  .e-del:hover {
+    color: var(--danger);
+    background: rgba(255, 59, 48, 0.1);
+  }
+  .e-del svg {
+    width: 12px;
+    height: 12px;
+  }
+
   .update-msg {
     margin-top: 12px;
     padding: 8px 12px;

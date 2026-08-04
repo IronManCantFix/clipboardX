@@ -56,6 +56,7 @@ export const api = {
   positionPopover: () => invoke('position_popover'),
   getStorageStats: () => invoke<StorageStats>('get_storage_stats'),
   clearImages: () => invoke('clear_images'),
+  clearHistory: () => invoke<number>('clear_history'),
   getAutostart: () => invoke<boolean>('get_autostart'),
   setAutostart: (enabled: boolean) => invoke('set_autostart', { enabled }),
   checkForUpdates: () => invoke<UpdateInfo>('check_for_updates'),

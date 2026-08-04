@@ -161,6 +161,16 @@ pub fn clear_images(state: tauri::State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn clear_history(state: tauri::State<'_, AppState>) -> Result<usize, String> {
+    state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .delete_non_pinned()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().is_enabled().map_err(|e| e.to_string())
