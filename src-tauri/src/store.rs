@@ -6,6 +6,7 @@ use std::path::Path;
 pub struct NewEntry {
     pub kind: EntryType,
     pub content: String,
+    pub content_hash: Option<i64>,
     pub rtf_data: Option<Vec<u8>>,
     pub image_path: Option<String>,
     pub thumb_path: Option<String>,
@@ -26,6 +27,7 @@ fn entry_from_row(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
         id: row.get("id")?,
         kind: serde_json::from_str(&format!("\"{kind}\"")).unwrap(),
         content: row.get("content")?,
+        content_hash: row.get("content_hash")?,
         rtf_data: row.get("rtf_data")?,
         image_path: row.get("image_path")?,
         thumb_path: row.get("thumb_path")?,
@@ -45,6 +47,7 @@ fn entry_from_row_light(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
         id: row.get("id")?,
         kind: serde_json::from_str(&format!("\"{kind}\"")).unwrap(),
         content: row.get("content")?,
+        content_hash: row.get("content_hash")?,
         rtf_data: None,
         image_path: row.get("image_path")?,
         thumb_path: row.get("thumb_path")?,
@@ -57,7 +60,7 @@ fn entry_from_row_light(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
 }
 
 const LIGHT_COLUMNS: &str =
-    "id, type, content, image_path, thumb_path, file_paths, source_app, pinned, created_at, last_used_at";
+    "id, type, content, content_hash, image_path, thumb_path, file_paths, source_app, pinned, created_at, last_used_at";
 
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
@@ -68,6 +71,7 @@ impl Store {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 type TEXT NOT NULL,
                 content TEXT NOT NULL,
+                content_hash INTEGER,
                 rtf_data BLOB,
                 image_path TEXT,
                 thumb_path TEXT,
@@ -80,16 +84,24 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_entries_sort ON entries(pinned DESC, last_used_at DESC);
             CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type);",
         )?;
+        // 旧库迁移：补充 content_hash 列（图片去重用）
+        let has_col: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('entries') WHERE name = 'content_hash'")?
+            .exists([])?;
+        if !has_col {
+            conn.execute_batch("ALTER TABLE entries ADD COLUMN content_hash INTEGER;")?;
+        }
         Ok(Store { conn })
     }
 
     pub fn insert(&self, e: &NewEntry) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO entries (type, content, rtf_data, image_path, thumb_path, file_paths, source_app, created_at, last_used_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO entries (type, content, content_hash, rtf_data, image_path, thumb_path, file_paths, source_app, created_at, last_used_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 serde_json::to_string(&e.kind).unwrap().trim_matches('"'),
                 e.content,
+                e.content_hash,
                 e.rtf_data,
                 e.image_path,
                 e.thumb_path,
@@ -100,6 +112,15 @@ impl Store {
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// 按图片内容 hash 查已存在的条目（图片去重专用）。
+    pub fn find_by_content_hash(&self, hash: i64) -> rusqlite::Result<Option<i64>> {
+        let mut stmt =
+            self.conn
+                .prepare("SELECT id FROM entries WHERE type = 'image' AND content_hash = ?1 LIMIT 1")?;
+        let mut rows = stmt.query_map(params![hash], |r| r.get(0))?;
+        rows.next().transpose()
     }
 
     pub fn list(&self) -> rusqlite::Result<Vec<Entry>> {
@@ -231,6 +252,7 @@ mod tests {
         NewEntry {
             kind: EntryType::Text,
             content: content.into(),
+            content_hash: None,
             rtf_data: None,
             image_path: None,
             thumb_path: None,

@@ -65,6 +65,7 @@ mod tests {
             id: 1,
             kind,
             content: content.into(),
+            content_hash: None,
             rtf_data: None,
             image_path: None,
             thumb_path: None,

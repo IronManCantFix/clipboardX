@@ -16,6 +16,9 @@ pub struct Entry {
     #[serde(rename = "type")]
     pub kind: EntryType,
     pub content: String,
+    /// 图片内容 hash（TIFF 内容 hash），用于图片去重；非图片为 None
+    #[serde(default)]
+    pub content_hash: Option<i64>,
     pub rtf_data: Option<Vec<u8>>,
     pub image_path: Option<String>,
     pub thumb_path: Option<String>,

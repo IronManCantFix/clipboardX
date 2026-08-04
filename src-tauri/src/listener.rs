@@ -96,26 +96,38 @@ pub fn spawn_listener(app: AppHandle) {
             }
             last_detected = Some(detected.clone());
             let now = now_ts();
-            let (kind, content, rtf, files, image_path, thumb_path) = match &detected {
-                Detected::Text(s) => (EntryType::Text, s.clone(), None, vec![], None, None),
-                Detected::Url(s) => (EntryType::Url, s.clone(), None, vec![], None, None),
+            let (kind, content, content_hash, rtf, files, image_path, thumb_path) = match &detected {
+                Detected::Text(s) => (EntryType::Text, s.clone(), None, None, vec![], None, None),
+                Detected::Url(s) => (EntryType::Url, s.clone(), None, None, vec![], None, None),
                 Detected::Rtf(r) => (
                     EntryType::Rtf,
                     "[富文本]".into(),
+                    None,
                     Some(r.clone()),
                     vec![],
                     None,
                     None,
                 ),
-                Detected::Files(f) => (EntryType::File, f.join(", "), None, f.clone(), None, None),
-                Detected::Image(_hash) => {
+                Detected::Files(f) => (EntryType::File, f.join(", "), None, None, f.clone(), None, None),
+                Detected::Image(hash) => {
                     let data_dir = state.data_dir.clone();
-                    let paths = snap.tiff.as_deref().and_then(|tiff| save_image(tiff, &data_dir).ok());
+                    let paths = snap
+                        .tiff
+                        .as_deref()
+                        .and_then(|tiff| save_image(tiff, *hash, &data_dir).ok());
                     let (path, thumb_path) = match paths {
                         Some((p, t)) => (p, Some(t)),
                         None => continue, // 图片保存失败则跳过
                     };
-                    (EntryType::Image, "[图片]".into(), None, vec![], Some(path), thumb_path)
+                    (
+                        EntryType::Image,
+                        "[图片]".into(),
+                        Some(*hash as i64),
+                        None,
+                        vec![],
+                        Some(path),
+                        thumb_path,
+                    )
                 }
             };
             let source_app = frontmost_app_name();
@@ -123,6 +135,7 @@ pub fn spawn_listener(app: AppHandle) {
             let new_entry = NewEntry {
                 kind,
                 content,
+                content_hash,
                 rtf_data: rtf,
                 image_path,
                 thumb_path,
@@ -135,11 +148,15 @@ pub fn spawn_listener(app: AppHandle) {
             {
                 let store = state.store.lock().unwrap();
                 // 全局去重：内容已存在则移到最前，不重复插入
-                match store.find_by_content(kind, &new_entry.content) {
-                    Ok(Some(existing_id)) => {
+                let existing = match new_entry.content_hash {
+                    Some(h) => store.find_by_content_hash(h).unwrap_or(None),
+                    None => store.find_by_content(kind, &new_entry.content).unwrap_or(None),
+                };
+                match existing {
+                    Some(existing_id) => {
                         let _ = store.touch(existing_id, now);
                     }
-                    _ => {
+                    None => {
                         let _ = store.insert(&new_entry);
                         if let Ok(removed) = store.prune(limit) {
                             drop(store);
@@ -164,7 +181,19 @@ pub fn spawn_listener(app: AppHandle) {
 const MAX_IMAGE_PIXELS: u64 = 24_000_000;
 
 /// 将 TIFF 数据转为 PNG 存入 images 目录，返回 (原图路径, 缩略图路径)。
-fn save_image(tiff: &[u8], data_dir: &Path) -> Result<(String, String), String> {
+/// 文件名基于内容 hash：同一张图重复复制时直接复用已有文件，不重复保存。
+fn save_image(tiff: &[u8], hash: u64, data_dir: &Path) -> Result<(String, String), String> {
+    let images_dir = data_dir.join("images");
+    std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
+    let name = format!("{hash}");
+    let path = images_dir.join(format!("{name}.png"));
+    let thumb_path = images_dir.join(format!("{name}_thumb.png"));
+    if path.exists() && thumb_path.exists() {
+        return Ok((
+            path.to_string_lossy().into_owned(),
+            thumb_path.to_string_lossy().into_owned(),
+        ));
+    }
     // 先只读 TIFF 头部获取尺寸，超大图直接拒绝，不进入全量解码
     let reader =
         image::ImageReader::with_format(std::io::Cursor::new(tiff), image::ImageFormat::Tiff);
@@ -176,17 +205,12 @@ fn save_image(tiff: &[u8], data_dir: &Path) -> Result<(String, String), String> 
     }
     let img = image::load_from_memory_with_format(tiff, image::ImageFormat::Tiff)
         .map_err(|e| format!("tiff decode failed: {e}"))?;
-    let images_dir = data_dir.join("images");
-    std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
-    let name = format!("{}", now_ms());
     // 原图：最长边超过 1600px 时缩小，控制磁盘占用
     let main = downscale(&img, 1600);
-    let path = images_dir.join(format!("{name}.png"));
     main.save_with_format(&path, image::ImageFormat::Png)
         .map_err(|e| format!("png save failed: {e}"))?;
     // 缩略图：最长边 360px，弹窗列表展示用，降低渲染内存
     let thumb = downscale(&img, 360);
-    let thumb_path = images_dir.join(format!("{name}_thumb.png"));
     thumb
         .save_with_format(&thumb_path, image::ImageFormat::Png)
         .map_err(|e| format!("thumb save failed: {e}"))?;
