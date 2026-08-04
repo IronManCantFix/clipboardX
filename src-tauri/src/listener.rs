@@ -40,6 +40,78 @@ pub fn same_content(a: &Detected, b: &Detected) -> bool {
     a == b
 }
 
+
+use crate::clipboard::read_clipboard;
+use crate::commands::AppState;
+use crate::models::EntryType;
+use crate::store::NewEntry;
+use chrono::Utc;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter};
+
+pub fn spawn_listener(app: AppHandle, state: std::sync::Arc<AppState>) {
+    std::thread::spawn(move || {
+        let mut last_count = read_clipboard().change_count;
+        let mut last_detected: Option<Detected> = None;
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let snap = read_clipboard();
+            if snap.change_count == last_count {
+                continue;
+            }
+            last_count = snap.change_count;
+            let Some(detected) = classify(&snap) else {
+                continue;
+            };
+            // M1：图片跳过（M2 支持）
+            if detected == Detected::Image {
+                last_detected = None;
+                continue;
+            }
+            if last_detected.as_ref().is_some_and(|p| same_content(p, &detected)) {
+                continue;
+            }
+            last_detected = Some(detected.clone());
+            let now = Utc::now().timestamp();
+            let (kind, content, rtf, files) = match &detected {
+                Detected::Text(s) => (EntryType::Text, s.clone(), None, vec![]),
+                Detected::Url(s) => (EntryType::Url, s.clone(), None, vec![]),
+                Detected::Rtf(r) => (EntryType::Rtf, "[富文本]".into(), Some(r.clone()), vec![]),
+                Detected::Files(f) => (EntryType::File, f.join(", "), None, f.clone()),
+                Detected::Image => unreachable!(),
+            };
+            let source_app = frontmost_app_name();
+            let new_entry = NewEntry {
+                kind,
+                content,
+                rtf_data: rtf,
+                image_path: None,
+                thumb_path: None,
+                file_paths: files,
+                source_app,
+                created_at: now,
+                last_used_at: now,
+            };
+            let limit = state.settings.lock().unwrap().settings.history_limit;
+            {
+                let store = state.store.lock().unwrap();
+                let _ = store.insert(&new_entry);
+                let _ = store.prune(limit);
+            }
+            let _ = app.emit("clipboard:new-entry", ());
+        }
+    });
+}
+
+/// 前台应用名（objc2 NSWorkspace；失败返回 None）
+fn frontmost_app_name() -> Option<String> {
+    objc2::rc::autoreleasepool(|_| {
+        let ws = objc2_app_kit::NSWorkspace::sharedWorkspace();
+        let app = ws.frontmostApplication()?;
+        Some(app.localizedName()?.to_string())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

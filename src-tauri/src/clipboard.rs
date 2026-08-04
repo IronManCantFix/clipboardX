@@ -1,4 +1,5 @@
 use objc2::rc::{autoreleasepool, Retained};
+#[allow(deprecated)]
 use objc2_app_kit::{
     NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeRTF, NSPasteboardTypeString,
     NSPasteboardTypeTIFF,
@@ -14,6 +15,7 @@ pub struct ClipboardSnapshot {
     pub has_image: bool,
 }
 
+#[allow(deprecated)]
 fn type_constants() -> (
     &'static objc2_app_kit::NSPasteboardType,
     &'static objc2_app_kit::NSPasteboardType,
