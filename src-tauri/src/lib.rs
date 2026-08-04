@@ -16,6 +16,16 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_positioner::init())
         .setup(|app| {
+            shortcut::set_accessory_policy();
+            // 主窗口原生失焦隐藏（macOS 上最可靠的隐藏触发）
+            if let Some(main_win) = app.get_webview_window("main") {
+                let hide_win = main_win.clone();
+                main_win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(false) = event {
+                        let _ = hide_win.hide();
+                    }
+                });
+            }
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let store = store::Store::open(&data_dir.join("entries.db"))

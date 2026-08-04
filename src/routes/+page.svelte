@@ -33,7 +33,8 @@
     const onBlur = () => void win.hide();
     window.addEventListener('blur', onBlur);
     void win.onFocusChanged(({ payload: focused }) => {
-      if (!focused) void win.hide();
+      if (focused) void refresh(); // 打开时兜底刷新，保证列表最新
+      else void win.hide();
     });
   });
 

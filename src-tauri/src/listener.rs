@@ -94,6 +94,7 @@ pub fn spawn_listener(app: AppHandle, state: std::sync::Arc<AppState>) {
                 }
             };
             let source_app = frontmost_app_name();
+            let source_app_log = source_app.clone();
             let new_entry = NewEntry {
                 kind,
                 content,
@@ -111,6 +112,11 @@ pub fn spawn_listener(app: AppHandle, state: std::sync::Arc<AppState>) {
                 let _ = store.insert(&new_entry);
                 let _ = store.prune(limit);
             }
+            println!(
+                "[clipboardx] captured {:?} from {}",
+                kind,
+                source_app_log.as_deref().unwrap_or("?")
+            );
             let _ = app.emit("clipboard:new-entry", ());
         }
     });

@@ -1,5 +1,27 @@
+use objc2::MainThreadMarker;
+use objc2_app_kit::NSApplicationActivationPolicy;
 use tauri::{AppHandle, LogicalPosition, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
+
+/// 设为菜单栏应用（不显示 Dock 图标）。
+pub fn set_accessory_policy() {
+    objc2::rc::autoreleasepool(|_| {
+        if let Some(marker) = MainThreadMarker::new() {
+            let nsapp = objc2_app_kit::NSApplication::sharedApplication(marker);
+            nsapp.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        }
+    });
+}
+
+/// 激活应用，使弹出窗口可以接收焦点与键盘输入。
+pub fn activate_app() {
+    objc2::rc::autoreleasepool(|_| {
+        if let Some(marker) = MainThreadMarker::new() {
+            let nsapp = objc2_app_kit::NSApplication::sharedApplication(marker);
+            nsapp.activate();
+        }
+    });
+}
 
 /// 当前鼠标位置（逻辑坐标，左上原点），用于弹窗定位。
 pub fn cursor_position() -> Option<(f64, f64)> {
@@ -15,6 +37,7 @@ pub fn cursor_position() -> Option<(f64, f64)> {
 }
 
 pub fn show_popover(app: &AppHandle) {
+    activate_app();
     if let Some(win) = app.get_webview_window("main") {
         if let Some((x, y)) = cursor_position() {
             let _ = win.set_position(LogicalPosition::new(x, y));
