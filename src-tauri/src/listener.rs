@@ -50,21 +50,38 @@ fn content_hash(data: &[u8]) -> u64 {
 }
 
 
-use crate::clipboard::read_clipboard;
+use crate::clipboard::{change_count, read_clipboard};
 use crate::commands::AppState;
 use crate::models::EntryType;
 use crate::store::NewEntry;
-use chrono::Utc;
 use std::path::Path;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
+fn now_ts() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 pub fn spawn_listener(app: AppHandle) {
     std::thread::spawn(move || {
-        let mut last_count = read_clipboard().change_count;
+        let mut last_count = change_count();
         let mut last_detected: Option<Detected> = None;
         loop {
-            std::thread::sleep(Duration::from_millis(500));
+            std::thread::sleep(Duration::from_millis(750));
+            // 先只查 changeCount，未变化则完全跳过全量读取（省内存/CPU）
+            if change_count() == last_count {
+                continue;
+            }
             let snap = read_clipboard();
             if snap.change_count == last_count {
                 continue;
@@ -78,20 +95,27 @@ pub fn spawn_listener(app: AppHandle) {
                 continue;
             }
             last_detected = Some(detected.clone());
-            let now = Utc::now().timestamp();
-            let (kind, content, rtf, files, image_path) = match &detected {
-                Detected::Text(s) => (EntryType::Text, s.clone(), None, vec![], None),
-                Detected::Url(s) => (EntryType::Url, s.clone(), None, vec![], None),
-                Detected::Rtf(r) => (EntryType::Rtf, "[富文本]".into(), Some(r.clone()), vec![], None),
-                Detected::Files(f) => (EntryType::File, f.join(", "), None, f.clone(), None),
+            let now = now_ts();
+            let (kind, content, rtf, files, image_path, thumb_path) = match &detected {
+                Detected::Text(s) => (EntryType::Text, s.clone(), None, vec![], None, None),
+                Detected::Url(s) => (EntryType::Url, s.clone(), None, vec![], None, None),
+                Detected::Rtf(r) => (
+                    EntryType::Rtf,
+                    "[富文本]".into(),
+                    Some(r.clone()),
+                    vec![],
+                    None,
+                    None,
+                ),
+                Detected::Files(f) => (EntryType::File, f.join(", "), None, f.clone(), None, None),
                 Detected::Image(_hash) => {
                     let data_dir = state.data_dir.clone();
-                    let path = snap.tiff.as_deref().and_then(|tiff| save_image(tiff, &data_dir).ok());
-                    let path = match path {
-                        Some(p) => p,
+                    let paths = snap.tiff.as_deref().and_then(|tiff| save_image(tiff, &data_dir).ok());
+                    let (path, thumb_path) = match paths {
+                        Some((p, t)) => (p, Some(t)),
                         None => continue, // 图片保存失败则跳过
                     };
-                    (EntryType::Image, "[图片]".into(), None, vec![], Some(path))
+                    (EntryType::Image, "[图片]".into(), None, vec![], Some(path), thumb_path)
                 }
             };
             let source_app = frontmost_app_name();
@@ -101,7 +125,7 @@ pub fn spawn_listener(app: AppHandle) {
                 content,
                 rtf_data: rtf,
                 image_path,
-                thumb_path: None,
+                thumb_path,
                 file_paths: files,
                 source_app,
                 created_at: now,
@@ -117,7 +141,12 @@ pub fn spawn_listener(app: AppHandle) {
                     }
                     _ => {
                         let _ = store.insert(&new_entry);
-                        let _ = store.prune(limit);
+                        if let Ok(removed) = store.prune(limit) {
+                            drop(store);
+                            for e in &removed {
+                                crate::commands::remove_image_file(&state.data_dir, e);
+                            }
+                        }
                     }
                 }
             }
@@ -131,16 +160,51 @@ pub fn spawn_listener(app: AppHandle) {
     });
 }
 
-/// 将 TIFF 数据转为 PNG 存入 images 目录，返回文件路径。
-fn save_image(tiff: &[u8], data_dir: &Path) -> Result<String, String> {
+/// 像素上限：超过则跳过保存，避免超大图（如 8K 截图）全量解码造成内存尖峰。
+const MAX_IMAGE_PIXELS: u64 = 24_000_000;
+
+/// 将 TIFF 数据转为 PNG 存入 images 目录，返回 (原图路径, 缩略图路径)。
+fn save_image(tiff: &[u8], data_dir: &Path) -> Result<(String, String), String> {
+    // 先只读 TIFF 头部获取尺寸，超大图直接拒绝，不进入全量解码
+    let reader =
+        image::ImageReader::with_format(std::io::Cursor::new(tiff), image::ImageFormat::Tiff);
+    let (w, h) = reader
+        .into_dimensions()
+        .map_err(|e| format!("tiff header read failed: {e}"))?;
+    if (w as u64) * (h as u64) > MAX_IMAGE_PIXELS {
+        return Err(format!("image too large ({w}x{h}), skipped"));
+    }
     let img = image::load_from_memory_with_format(tiff, image::ImageFormat::Tiff)
         .map_err(|e| format!("tiff decode failed: {e}"))?;
     let images_dir = data_dir.join("images");
     std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
-    let path = images_dir.join(format!("{}.png", Utc::now().timestamp_millis()));
-    img.save_with_format(&path, image::ImageFormat::Png)
+    let name = format!("{}", now_ms());
+    // 原图：最长边超过 1600px 时缩小，控制磁盘占用
+    let main = downscale(&img, 1600);
+    let path = images_dir.join(format!("{name}.png"));
+    main.save_with_format(&path, image::ImageFormat::Png)
         .map_err(|e| format!("png save failed: {e}"))?;
-    Ok(path.to_string_lossy().into_owned())
+    // 缩略图：最长边 360px，弹窗列表展示用，降低渲染内存
+    let thumb = downscale(&img, 360);
+    let thumb_path = images_dir.join(format!("{name}_thumb.png"));
+    thumb
+        .save_with_format(&thumb_path, image::ImageFormat::Png)
+        .map_err(|e| format!("thumb save failed: {e}"))?;
+    Ok((
+        path.to_string_lossy().into_owned(),
+        thumb_path.to_string_lossy().into_owned(),
+    ))
+}
+
+fn downscale(img: &image::DynamicImage, max: u32) -> image::DynamicImage {
+    let (w, h) = (img.width(), img.height());
+    if w.max(h) <= max {
+        return img.clone();
+    }
+    let scale = max as f32 / w.max(h) as f32;
+    let nw = ((w as f32 * scale).round() as u32).max(1);
+    let nh = ((h as f32 * scale).round() as u32).max(1);
+    img.resize(nw, nh, image::imageops::FilterType::Lanczos3)
 }
 
 /// 前台应用名（objc2 NSWorkspace；失败返回 None）

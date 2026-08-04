@@ -1,20 +1,21 @@
-use crate::clipboard::{write_files, write_image_png, write_text};
+use crate::clipboard::{write_files, write_image_png, write_rtf, write_text};
 use crate::models::{Entry, EntryType};
 
 #[derive(Debug, PartialEq)]
 pub enum Payload {
     Text(String),
+    Rtf(Vec<u8>),
     Files(Vec<String>),
     Image(String),
 }
 
-/// 将条目转成可写回剪贴板的负载。M1：文本/URL/文件；RTF/图片 M2 支持。
+/// 将条目转成可写回剪贴板的负载。RTF 恢复为富文本数据。
 pub fn write_payload(e: &Entry) -> Payload {
     match e.kind {
         EntryType::Text | EntryType::Url => Payload::Text(e.content.clone()),
         EntryType::File => Payload::Files(e.file_paths.clone()),
         EntryType::Image => Payload::Image(e.image_path.clone().unwrap_or_default()),
-        EntryType::Rtf => Payload::Text(e.content.clone()),
+        EntryType::Rtf => Payload::Rtf(e.rtf_data.clone().unwrap_or_default()),
     }
 }
 
@@ -22,6 +23,10 @@ pub fn write_back(e: &Entry) -> Result<(), String> {
     match write_payload(e) {
         Payload::Text(s) => {
             write_text(&s);
+            Ok(())
+        }
+        Payload::Rtf(data) => {
+            write_rtf(&data);
             Ok(())
         }
         Payload::Files(v) => {
@@ -95,5 +100,15 @@ mod tests {
         let mut e = entry(EntryType::Image, "[图片]");
         e.image_path = Some("/a/b.png".into());
         assert_eq!(write_payload(&e), Payload::Image("/a/b.png".into()));
+    }
+
+    #[test]
+    fn payload_for_rtf_uses_rtf_data() {
+        let mut e = entry(EntryType::Rtf, "[富文本]");
+        e.rtf_data = Some(vec![0x7b, 0x5c, 0x72, 0x74, 0x66]);
+        assert_eq!(
+            write_payload(&e),
+            Payload::Rtf(vec![0x7b, 0x5c, 0x72, 0x74, 0x66])
+        );
     }
 }

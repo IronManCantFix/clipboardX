@@ -44,10 +44,10 @@
     }
   }}
 >
-  {#if entry.type === 'image' && entry.image_path}
+  {#if entry.type === 'image' && (entry.image_path || entry.thumb_path)}
     <img
       class="thumb"
-      src={convertFileSrc(entry.image_path)}
+      src={convertFileSrc(entry.thumb_path ?? entry.image_path ?? '')}
       alt="图片"
       style="height:{thumbHeight}px"
     />

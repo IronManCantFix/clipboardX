@@ -16,3 +16,6 @@ vite.config.ts.timestamp-*
 
 .superpowers/
 src-tauri/target/
+
+# 发布产物（由 scripts/release.sh 生成并上传到 GitHub Release）
+/latest.json

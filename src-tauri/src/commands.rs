@@ -11,6 +11,21 @@ pub struct AppState {
     pub data_dir: std::path::PathBuf,
 }
 
+fn now_ts() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// 删除图片条目时同步清理磁盘上的原图与缩略图。
+pub fn remove_image_file(data_dir: &std::path::Path, e: &crate::models::Entry) {
+    let _ = data_dir; // 保留参数签名，后续可直接从条目路径删除
+    for p in [&e.image_path, &e.thumb_path].into_iter().flatten() {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 #[tauri::command]
 pub fn list_entries(
     state: tauri::State<'_, AppState>,
@@ -21,15 +36,6 @@ pub fn list_entries(
         Some("pinned") => store.list_pinned().map_err(|e| e.to_string()),
         _ => store.list().map_err(|e| e.to_string()),
     }
-}
-
-#[tauri::command]
-pub fn search_entries(
-    state: tauri::State<'_, AppState>,
-    query: String,
-) -> Result<Vec<crate::models::Entry>, String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    store.search(&query).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -48,12 +54,20 @@ pub fn set_pinned(
 
 #[tauri::command]
 pub fn delete_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<(), String> {
-    state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .delete(id)
-        .map_err(|e| e.to_string())
+    let entry = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store.get(id).map_err(|e| e.to_string())?
+    };
+    if let Some(e) = entry {
+        state
+            .store
+            .lock()
+            .map_err(|e| e.to_string())?
+            .delete(id)
+            .map_err(|e| e.to_string())?;
+        remove_image_file(&state.data_dir, &e);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -62,15 +76,15 @@ pub fn paste_entry(
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<(), String> {
-    let list = state
+    let e = state
         .store
         .lock()
         .map_err(|e| e.to_string())?
-        .list()
-        .map_err(|e| e.to_string())?;
-    let e = list.into_iter().find(|x| x.id == id).ok_or("entry not found")?;
+        .get(id)
+        .map_err(|e| e.to_string())?
+        .ok_or("entry not found")?;
     crate::paste::write_back(&e).map_err(|e| e)?;
-    let now = chrono::Utc::now().timestamp();
+    let now = now_ts();
     state
         .store
         .lock()
@@ -88,10 +102,27 @@ pub fn paste_entry(
 
 #[tauri::command]
 pub fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
+    ensure_settings_window(&app)
+}
+
+/// 懒创建设置窗口：平时不占内存，关闭后销毁，下次打开再重建。
+pub fn ensure_settings_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("settings") {
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
     }
+    let settings_url = if cfg!(debug_assertions) {
+        tauri::WebviewUrl::App("/settings".into())
+    } else {
+        tauri::WebviewUrl::App("settings.html".into())
+    };
+    tauri::WebviewWindowBuilder::new(app, "settings", settings_url)
+        .title("ClipboardX 设置")
+        .inner_size(560.0, 640.0)
+        .resizable(false)
+        .build()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -167,6 +198,7 @@ pub fn clear_history(state: tauri::State<'_, AppState>) -> Result<usize, String>
         .lock()
         .map_err(|e| e.to_string())?
         .delete_non_pinned()
+        .map(|entries| entries.len())
         .map_err(|e| e.to_string())
 }
 
@@ -184,43 +216,6 @@ pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String>
         autostart.enable().map_err(|e| e.to_string())
     } else {
         autostart.disable().map_err(|e| e.to_string())
-    }
-}
-
-#[derive(Serialize)]
-pub struct UpdateInfo {
-    pub current_version: String,
-    pub latest_version: Option<String>,
-    pub has_update: bool,
-    pub message: String,
-}
-
-#[tauri::command]
-pub fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
-    let current = app.package_info().version.to_string();
-    // TODO: 项目发布后替换为真实仓库地址
-    let url = "https://api.github.com/repos/huanghongda/ClipboardX/releases/latest";
-    match ureq::get(url).set("User-Agent", "ClipboardX").call() {
-        Ok(resp) => {
-            let body = resp.into_string().map_err(|e| e.to_string())?;
-            let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-            let latest = json["tag_name"]
-                .as_str()
-                .map(|s| s.trim_start_matches('v').to_string());
-            let has_update = latest.as_deref().map(|l| l != current).unwrap_or(false);
-            Ok(UpdateInfo {
-                current_version: current,
-                latest_version: latest,
-                has_update,
-                message: if has_update {
-                    "发现新版本".into()
-                } else {
-                    "已是最新版本".into()
-                },
-            })
-        }
-        Err(ureq::Error::Status(404, _)) => Err("未配置更新源（项目尚未发布）".into()),
-        Err(e) => Err(format!("检查更新失败：{e}")),
     }
 }
 

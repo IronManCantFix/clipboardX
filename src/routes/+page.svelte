@@ -15,7 +15,8 @@
     history_limit: 15,
     shortcut: 'Command+Shift+V',
     opacity: 0.9,
-    window_mode: 'auto',
+    width_mode: 'auto',
+    height_mode: 'auto',
     window_width: 360,
     window_height: 480,
     search_enabled: true,
@@ -25,9 +26,11 @@
   });
 
   const ROW_H = 32;
-  const FIXED_H = 110;
   const EMPTY_H = 100;
   const MAX_LIST_H = 15 * ROW_H;
+  const AUTO_W = 360;
+
+  let pinnedCount = $derived(entries.filter((e) => e.pinned).length);
 
   let visibleEntries = $derived(
     settings.search_enabled ? filterEntries(entries, query, settings.search_mode) : entries,
@@ -49,40 +52,63 @@
       : ROW_H;
   }
 
+  // 固定区域（搜索框 / Tab / 底部提示）的实际渲染高度，随开关自动变化
+  function fixedHeight(): number {
+    let h = 10; // .list 上下 padding 4+4 + .pop 边框 1+1
+    for (const sel of ['.search', '.tabs', '.foot']) {
+      const el = document.querySelector<HTMLElement>(sel);
+      if (el) h += el.offsetHeight;
+    }
+    return h;
+  }
+
+  // 列表内容高度：按实际渲染的行高累加，超过 15 行时用滚动条
+  function listHeight(): number {
+    if (visibleEntries.length === 0) return EMPTY_H;
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.row'));
+    const h =
+      rows.length === visibleEntries.length
+        ? rows.reduce((s, r) => s + r.offsetHeight, 0)
+        : visibleEntries.reduce((s, e) => s + rowHeight(e), 0);
+    return Math.min(h, MAX_LIST_H);
+  }
+
   function applyHeight() {
     const win = getCurrentWindow();
-    if (settings.window_mode === 'custom') {
-      void win.setSize(new LogicalSize(settings.window_width, settings.window_height));
-    } else {
-      const listH =
-        visibleEntries.length === 0
-          ? EMPTY_H
-          : Math.min(
-              visibleEntries.reduce((s, e) => s + rowHeight(e), 0),
-              MAX_LIST_H,
-            );
-      void win.setSize(new LogicalSize(settings.window_width, FIXED_H + listH));
-    }
+    const width =
+      settings.width_mode === 'custom' ? settings.window_width : AUTO_W;
+    const height =
+      settings.height_mode === 'custom'
+        ? settings.window_height
+        : fixedHeight() + listHeight();
+    void win.setSize(new LogicalSize(width, height));
     void api.positionPopover();
   }
 
   $effect(() => {
     visibleEntries;
-    settings.window_mode;
+    pinnedCount;
+    settings.search_enabled;
+    settings.width_mode;
+    settings.height_mode;
     settings.window_width;
     settings.window_height;
     settings.image_preview_height;
     applyHeight();
   });
 
+  // 固定项被清空时回到「全部」Tab，避免停留在空的固定列表
+  $effect(() => {
+    if (tab === 'pinned' && pinnedCount === 0) {
+      tab = 'all';
+      void refresh();
+    }
+  });
+
   // 应用透明度
   $effect(() => {
     document.documentElement.style.setProperty('--pop-alpha', String(settings.opacity));
   });
-
-  function openSettings() {
-    void api.showSettings();
-  }
 
   onMount(async () => {
     const win = getCurrentWindow();
@@ -148,15 +174,14 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="pop">
-  <div class="search">
-    {#if settings.search_enabled}
+  {#if settings.search_enabled}
+    <div class="search">
       <input bind:this={searchInput} bind:value={query} placeholder="搜索剪贴板…" />
-    {:else}
-      <div class="no-search"></div>
-    {/if}
-    <button class="gear" onclick={openSettings} title="设置" aria-label="设置">⚙︎</button>
-  </div>
-  <TabBar {tab} pinnedCount={entries.filter((e) => e.pinned).length} onswitch={switchTab} />
+    </div>
+  {/if}
+  {#if pinnedCount > 0}
+    <TabBar {tab} {pinnedCount} onswitch={switchTab} />
+  {/if}
   <div class="list">
     {#if visibleEntries.length === 0}
       <div class="empty">
@@ -193,22 +218,5 @@
     display: flex;
     align-items: center;
     gap: 6px;
-  }
-  .no-search {
-    height: 28px;
-  }
-  .gear {
-    background: none;
-    border: none;
-    font-size: 15px;
-    cursor: pointer;
-    color: var(--text-secondary);
-    padding: 3px 4px;
-    border-radius: 5px;
-    flex-shrink: 0;
-  }
-  .gear:hover {
-    color: var(--text-primary);
-    background: rgba(120, 120, 128, 0.15);
   }
 </style>

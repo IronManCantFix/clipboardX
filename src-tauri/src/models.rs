@@ -29,7 +29,10 @@ pub struct Entry {
 fn default_opacity() -> f64 {
     0.9
 }
-fn default_window_mode() -> String {
+fn default_width_mode() -> String {
+    "auto".into()
+}
+fn default_height_mode() -> String {
     "auto".into()
 }
 fn default_position_mode() -> String {
@@ -46,9 +49,12 @@ pub struct Settings {
     /// 弹窗背景透明度 0.3..=1.0
     #[serde(default = "default_opacity")]
     pub opacity: f64,
-    /// 窗口尺寸模式："auto"（按条数自适应）| "custom"（固定宽高）
-    #[serde(default = "default_window_mode")]
-    pub window_mode: String,
+    /// 宽度模式："auto"（默认宽度）| "custom"（指定宽度）
+    #[serde(default = "default_width_mode")]
+    pub width_mode: String,
+    /// 高度模式："auto"（按条数自适应）| "custom"（指定高度）
+    #[serde(default = "default_height_mode")]
+    pub height_mode: String,
     #[serde(default = "default_window_width")]
     pub window_width: i64,
     #[serde(default = "default_window_height")]
@@ -86,7 +92,8 @@ impl Default for Settings {
             history_limit: 15,
             shortcut: "Command+Shift+V".into(),
             opacity: 0.9,
-            window_mode: "auto".into(),
+            width_mode: "auto".into(),
+            height_mode: "auto".into(),
             window_width: 360,
             window_height: 480,
             search_enabled: true,

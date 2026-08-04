@@ -8,7 +8,8 @@
     history_limit: 15,
     shortcut: 'Command+Shift+V',
     opacity: 0.9,
-    window_mode: 'auto',
+    width_mode: 'auto',
+    height_mode: 'auto',
     window_width: 360,
     window_height: 480,
     search_enabled: true,
@@ -148,9 +149,13 @@
     updateMsg = '';
     try {
       const info = await api.checkForUpdates();
-      updateMsg = info.has_update
-        ? `发现新版本 ${info.latest_version}（当前 ${info.current_version}）`
-        : `已是最新版本（${info.current_version}）`;
+      if (!info.has_update) {
+        updateMsg = `已是最新版本（${info.current_version}）`;
+        return;
+      }
+      updateMsg = `发现新版本 ${info.latest_version}（当前 ${info.current_version}），正在下载并安装…`;
+      await api.downloadAndInstallUpdate();
+      updateMsg = `新版本 ${info.latest_version} 已安装完成`;
     } catch (e) {
       updateMsg = String(e).replace(/^Error:\s*/, '');
     } finally {
@@ -172,8 +177,7 @@
 <div class="settings">
   <aside class="sidebar">
     <div class="brand">
-      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-             stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><path d="M9 12h6M9 16h4"/></svg></div>
+      <img class="logo" src="/icon.png" alt="ClipboardX" />
       <div>
         <b>ClipboardX</b>
         <span>v{version || '…'}</span>
@@ -198,17 +202,6 @@
       <section>
         <h2>常规</h2>
         <div class="card">
-          <div class="field">
-            <div class="row-top">
-              <span class="lbl">历史记录上限</span>
-              <span class="val">{settings.history_limit} 条</span>
-            </div>
-            <input type="range" min="1" max="100" value={settings.history_limit}
-                   style="--p:{pct(settings.history_limit, 1, 100)}%"
-                   oninput={(e) => set('history_limit', Number((e.target as HTMLInputElement).value))} />
-            <p class="hint">超过上限自动删除最旧的未固定条目（固定项永不被清理）</p>
-          </div>
-          <div class="divider"></div>
           <div class="field row">
             <div>
               <span class="lbl">开机自动启动</span>
@@ -222,6 +215,17 @@
                         status = '设置失败';
                       });
                     }}></button>
+          </div>
+          <div class="divider"></div>
+          <div class="field">
+            <div class="row-top">
+              <span class="lbl">历史记录上限</span>
+              <span class="val">{settings.history_limit} 条</span>
+            </div>
+            <input type="range" min="1" max="100" value={settings.history_limit}
+                   style="--p:{pct(settings.history_limit, 1, 100)}%"
+                   oninput={(e) => set('history_limit', Number((e.target as HTMLInputElement).value))} />
+            <p class="hint">超过上限自动删除最旧的未固定条目（固定项永不被清理）</p>
           </div>
         </div>
       </section>
@@ -241,30 +245,35 @@
           </div>
           <div class="divider"></div>
           <div class="field">
-            <div class="row-top"><span class="lbl">窗口尺寸</span></div>
+            <div class="row-top"><span class="lbl">窗口宽度</span></div>
             <div class="seg">
-              <button class:on={settings.window_mode === 'auto'} onclick={() => set('window_mode', 'auto')}>自动</button>
-              <button class:on={settings.window_mode === 'custom'} onclick={() => set('window_mode', 'custom')}>自定义</button>
+              <button class:on={settings.width_mode === 'auto'} onclick={() => set('width_mode', 'auto')}>自动</button>
+              <button class:on={settings.width_mode === 'custom'} onclick={() => set('width_mode', 'custom')}>自定义</button>
             </div>
-            {#if settings.window_mode === 'custom'}
+            {#if settings.width_mode === 'custom'}
               <div class="sub">
-                <div class="row-top">
-                  <span class="lbl">宽度</span>
-                  <span class="val">{settings.window_width} px</span>
-                </div>
                 <input type="range" min="220" max="800" step="10" value={settings.window_width}
                        style="--p:{pct(settings.window_width, 220, 800)}%"
                        oninput={(e) => set('window_width', Number((e.target as HTMLInputElement).value))} />
-                <div class="row-top">
-                  <span class="lbl">高度</span>
-                  <span class="val">{settings.window_height} px</span>
-                </div>
+              </div>
+            {/if}
+            <p class="hint">{settings.width_mode === 'auto' ? '自动：使用默认宽度' : `自定义：${settings.window_width} px`}</p>
+          </div>
+          <div class="divider"></div>
+          <div class="field">
+            <div class="row-top"><span class="lbl">窗口高度</span></div>
+            <div class="seg">
+              <button class:on={settings.height_mode === 'auto'} onclick={() => set('height_mode', 'auto')}>自动</button>
+              <button class:on={settings.height_mode === 'custom'} onclick={() => set('height_mode', 'custom')}>自定义</button>
+            </div>
+            {#if settings.height_mode === 'custom'}
+              <div class="sub">
                 <input type="range" min="200" max="1200" step="10" value={settings.window_height}
                        style="--p:{pct(settings.window_height, 200, 1200)}%"
                        oninput={(e) => set('window_height', Number((e.target as HTMLInputElement).value))} />
               </div>
             {/if}
-            <p class="hint">自动：高度随条目数量变化；自定义：固定宽高</p>
+            <p class="hint">{settings.height_mode === 'auto' ? '自动：高度随条目数量变化' : `自定义：${settings.window_height} px`}</p>
           </div>
           <div class="divider"></div>
           <div class="field">
@@ -392,8 +401,7 @@
       <section>
         <h2>关于</h2>
         <div class="about-card">
-          <div class="about-logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
-             stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><path d="M9 12h6M9 16h4"/></svg></div>
+          <img class="about-logo" src="/icon.png" alt="ClipboardX" />
           <b>ClipboardX</b>
           <span class="ver">版本 {version || '…'}</span>
           <p class="about-desc">一个专为 macOS 打造的现代化剪贴板管理器 —— 原生体验、完全离线、低内存。</p>
@@ -480,13 +488,8 @@
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    background: linear-gradient(135deg, #0a84ff, #5e5ce6);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    box-shadow: 0 2px 6px rgba(10, 132, 255, 0.35);
+    object-fit: cover;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
   }
   .brand b {
     display: block;
@@ -771,14 +774,9 @@
     width: 56px;
     height: 56px;
     border-radius: 14px;
-    background: linear-gradient(135deg, #0a84ff, #5e5ce6);
-    color: #fff;
-    font-size: 26px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    object-fit: cover;
     margin: 0 auto 12px;
-    box-shadow: 0 4px 14px rgba(10, 132, 255, 0.35);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
   }
   .about-card b {
     display: block;

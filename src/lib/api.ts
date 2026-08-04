@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getVersion } from '@tauri-apps/api/app';
+import { check } from '@tauri-apps/plugin-updater';
 
 export type EntryType = 'text' | 'rtf' | 'image' | 'file' | 'url';
 
@@ -21,7 +23,8 @@ export interface Settings {
   history_limit: number;
   shortcut: string;
   opacity: number;
-  window_mode: 'auto' | 'custom';
+  width_mode: 'auto' | 'custom';
+  height_mode: 'auto' | 'custom';
   window_width: number;
   window_height: number;
   search_enabled: boolean;
@@ -37,6 +40,31 @@ export interface UpdateInfo {
   message: string;
 }
 
+async function checkForUpdates(): Promise<UpdateInfo> {
+  const current = await getVersion();
+  const update = await check();
+  if (!update) {
+    return {
+      current_version: current,
+      latest_version: null,
+      has_update: false,
+      message: '已是最新版本',
+    };
+  }
+  return {
+    current_version: current,
+    latest_version: update.version,
+    has_update: true,
+    message: `发现新版本 ${update.version}`,
+  };
+}
+
+async function downloadAndInstallUpdate(): Promise<void> {
+  const update = await check();
+  if (!update) return;
+  await update.downloadAndInstall();
+}
+
 export interface StorageStats {
   db_size: number;
   images_dir: string;
@@ -47,7 +75,6 @@ export interface StorageStats {
 
 export const api = {
   list: (tab?: 'pinned') => invoke<Entry[]>('list_entries', { tab: tab ?? null }),
-  search: (query: string) => invoke<Entry[]>('search_entries', { query }),
   setPinned: (id: number, pinned: boolean) => invoke('set_pinned', { id, pinned }),
   delete: (id: number) => invoke('delete_entry', { id }),
   paste: (id: number) => invoke('paste_entry', { id }),
@@ -59,7 +86,8 @@ export const api = {
   clearHistory: () => invoke<number>('clear_history'),
   getAutostart: () => invoke<boolean>('get_autostart'),
   setAutostart: (enabled: boolean) => invoke('set_autostart', { enabled }),
-  checkForUpdates: () => invoke<UpdateInfo>('check_for_updates'),
+  checkForUpdates: () => checkForUpdates(),
+  downloadAndInstallUpdate: () => downloadAndInstallUpdate(),
   updateSettings: (settings: Settings) => invoke('update_settings', { settings }),
 };
 

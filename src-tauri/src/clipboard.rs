@@ -16,6 +16,12 @@ pub struct ClipboardSnapshot {
     pub tiff: Option<Vec<u8>>,
 }
 
+/// 只读取剪贴板 changeCount，不读取任何数据内容。
+/// 轮询时先调它做廉价判断，避免每 500ms 全量拷贝文本/RTF/图片数据。
+pub fn change_count() -> isize {
+    autoreleasepool(|_| NSPasteboard::generalPasteboard().changeCount())
+}
+
 #[allow(deprecated)]
 fn type_constants() -> (
     &'static objc2_app_kit::NSPasteboardType,
@@ -84,6 +90,16 @@ pub fn write_image_png(path: &str) -> Result<(), String> {
         let _ = pb.setData_forType(Some(&ns), type_png);
     });
     Ok(())
+}
+
+pub fn write_rtf(data: &[u8]) {
+    autoreleasepool(|_| {
+        let type_rtf = type_constants().1;
+        let pb = NSPasteboard::generalPasteboard();
+        pb.clearContents();
+        let ns = NSData::from_vec(data.to_vec());
+        let _ = pb.setData_forType(Some(&ns), type_rtf);
+    });
 }
 
 pub fn write_files(paths: &[String]) {

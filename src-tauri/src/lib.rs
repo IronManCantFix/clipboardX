@@ -14,12 +14,12 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut}
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             shortcut::set_accessory_policy();
             // 主窗口原生失焦隐藏（macOS 上最可靠的隐藏触发）
@@ -44,26 +44,7 @@ pub fn run() {
             };
             app.manage(state);
 
-            // 设置窗口（隐藏，由托盘/齿轮打开）。dev 下 SvelteKit 路由为 /settings，
-            // 生产构建产物为 settings.html
-            let settings_url = if cfg!(debug_assertions) {
-                tauri::WebviewUrl::App("/settings".into())
-            } else {
-                tauri::WebviewUrl::App("settings.html".into())
-            };
-            let settings_win = tauri::WebviewWindowBuilder::new(app, "settings", settings_url)
-                .title("ClipboardX 设置")
-                .inner_size(560.0, 640.0)
-                .resizable(false)
-                .visible(false)
-                .build()?;
-            let settings_win_ref = settings_win.clone();
-            settings_win.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = settings_win_ref.hide();
-                }
-            });
+            // 设置窗口不在此创建：首次打开时懒加载，关闭即销毁，减少常驻内存
 
             // 托盘：左键/菜单弹出设置窗口
             {
@@ -83,10 +64,7 @@ pub fn run() {
                     .show_menu_on_left_click(true)
                     .on_menu_event(|app, event| match event.id().as_ref() {
                         "settings" => {
-                            if let Some(win) = app.get_webview_window("settings") {
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                            }
+                            let _ = commands::ensure_settings_window(app);
                         }
                         "quit" => app.exit(0),
                         _ => {}
@@ -106,7 +84,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_entries,
-            commands::search_entries,
             commands::set_pinned,
             commands::delete_entry,
             commands::paste_entry,
@@ -118,7 +95,6 @@ pub fn run() {
             commands::clear_history,
             commands::get_autostart,
             commands::set_autostart,
-            commands::check_for_updates,
             shortcut::position_popover,
         ])
         .build(tauri::generate_context!())

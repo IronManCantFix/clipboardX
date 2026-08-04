@@ -40,6 +40,7 @@ body {
   box-sizing: border-box;
 }
 .search {
+  flex-shrink: 0;
   padding: 8px 10px 6px;
 }
 .search input {
@@ -103,6 +104,7 @@ body {
   opacity: 0.8;
 }
 .foot {
+  flex-shrink: 0;
   display: flex;
   justify-content: space-between;
   padding: 7px 12px;

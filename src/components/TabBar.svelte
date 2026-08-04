@@ -19,6 +19,7 @@
 
 <style>
   .tabs {
+    flex-shrink: 0;
     display: flex;
     gap: 14px;
     padding: 2px 10px 6px;
