@@ -60,24 +60,41 @@ extern "C" {
 
 const FLAG_COMMAND: u64 = 0x100_000;
 const HID_EVENT_TAP: u32 = 0;
+const KEY_COMMAND: u16 = 55;
 const KEY_V: u16 = 9;
 
 /// 模拟 Cmd+V 粘贴到前台应用（需 macOS 辅助功能权限）。
-/// 直接调用 CoreGraphics CGEvent，不依赖 enigo。
+/// 发送完整的修饰键序列：Command↓ → V↓ → V↑ → Command↑
 /// 权限不足时 CGEvent 静默不生效——内容已写入剪贴板，用户可手动 Cmd+V。
 pub fn send_cmd_v() {
     unsafe {
-        let down = CGEventCreateKeyboardEvent(std::ptr::null(), KEY_V, true);
-        if !down.is_null() {
-            CGEventSetFlags(down, FLAG_COMMAND);
-            CGEventPost(HID_EVENT_TAP, down);
-            CFRelease(down);
+        // Command↓
+        let cmd_down = CGEventCreateKeyboardEvent(std::ptr::null(), KEY_COMMAND, true);
+        if !cmd_down.is_null() {
+            CGEventSetFlags(cmd_down, FLAG_COMMAND);
+            CGEventPost(HID_EVENT_TAP, cmd_down);
+            CFRelease(cmd_down);
         }
-        let up = CGEventCreateKeyboardEvent(std::ptr::null(), KEY_V, false);
-        if !up.is_null() {
-            CGEventSetFlags(up, FLAG_COMMAND);
-            CGEventPost(HID_EVENT_TAP, up);
-            CFRelease(up);
+        // V↓（带 Command flag）
+        let v_down = CGEventCreateKeyboardEvent(std::ptr::null(), KEY_V, true);
+        if !v_down.is_null() {
+            CGEventSetFlags(v_down, FLAG_COMMAND);
+            CGEventPost(HID_EVENT_TAP, v_down);
+            CFRelease(v_down);
+        }
+        // V↑（带 Command flag）
+        let v_up = CGEventCreateKeyboardEvent(std::ptr::null(), KEY_V, false);
+        if !v_up.is_null() {
+            CGEventSetFlags(v_up, FLAG_COMMAND);
+            CGEventPost(HID_EVENT_TAP, v_up);
+            CFRelease(v_up);
+        }
+        // Command↑
+        let cmd_up = CGEventCreateKeyboardEvent(std::ptr::null(), KEY_COMMAND, false);
+        if !cmd_up.is_null() {
+            CGEventSetFlags(cmd_up, 0);
+            CGEventPost(HID_EVENT_TAP, cmd_up);
+            CFRelease(cmd_up);
         }
     }
 }
