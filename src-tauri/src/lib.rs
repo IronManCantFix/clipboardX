@@ -7,6 +7,11 @@ mod settings;
 mod shortcut;
 mod store;
 
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+}
+
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
@@ -70,6 +75,14 @@ pub fn run() {
                         _ => {}
                     })
                     .build(app)?;
+            }
+
+            // 辅助功能权限检测：全局快捷键需要此权限，每次新版本安装后可能被 macOS 重置
+            if !unsafe { AXIsProcessTrusted() } {
+                println!("[clipboardx] 辅助功能权限未授予，全局快捷键无法工作，请在系统设置中授权");
+                let _ = std::process::Command::new("open")
+                    .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                    .spawn();
             }
 
             // 全局快捷键：唤起弹窗（默认 Command+Shift+V）
