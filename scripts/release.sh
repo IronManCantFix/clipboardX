@@ -39,6 +39,13 @@ VERSION="$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.js
 TAG="v$VERSION"
 echo "==> 本次发布版本：${VERSION}（tag: ${TAG}）"
 
+# 发布需要 updater 签名产物，确保配置已开启
+CREATE_UPDATER="$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json')).get('bundle',{}).get('createUpdaterArtifacts',False))")"
+if [[ "$CREATE_UPDATER" != "True" && "$CREATE_UPDATER" != "true" ]]; then
+  echo "!! 请先将 src-tauri/tauri.conf.json 的 bundle.createUpdaterArtifacts 改为 true（发布后 CI 只构建 app/dmg，updater 增量包由本脚本产出）" >&2
+  exit 1
+fi
+
 # 2. 签名密钥（tauri-cli 只认 TAURI_SIGNING_PRIVATE_KEY 环境变量）
 if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
   if [[ -f "$HOME/.tauri/clipboardx.key" ]]; then
