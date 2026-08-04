@@ -74,8 +74,11 @@ pub fn run() {
                 let quit =
                     MenuItem::with_id(app, "quit", "退出 ClipboardX", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&show_settings, &quit])?;
-                let icon = app.default_window_icon().cloned();
-                let mut builder = TrayIconBuilder::with_id("main-tray")
+                // 菜单栏图标：显式使用与应用图标一致的 32x32 彩色图标
+                let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
+                    .map_err(|e| format!("tray icon load failed: {e}"))?;
+                TrayIconBuilder::with_id("main-tray")
+                    .icon(tray_icon)
                     .menu(&menu)
                     .show_menu_on_left_click(true)
                     .on_menu_event(|app, event| match event.id().as_ref() {
@@ -87,11 +90,8 @@ pub fn run() {
                         }
                         "quit" => app.exit(0),
                         _ => {}
-                    });
-                if let Some(icon) = icon {
-                    builder = builder.icon(icon);
-                }
-                builder.build(app)?;
+                    })
+                    .build(app)?;
             }
 
             // 全局快捷键：唤起弹窗（默认 Command+Shift+V）
