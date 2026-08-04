@@ -56,7 +56,11 @@ pub fn delete_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<(), St
 }
 
 #[tauri::command]
-pub fn paste_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<(), String> {
+pub fn paste_entry(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: i64,
+) -> Result<(), String> {
     let list = state
         .store
         .lock()
@@ -72,6 +76,11 @@ pub fn paste_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<(), Str
         .map_err(|e| e.to_string())?
         .touch(id, now)
         .map_err(|e| e.to_string())?;
+    // 隐藏弹窗，让焦点回到唤起前的应用，再模拟 Cmd+V
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(150));
     crate::paste::send_cmd_v()
 }
 
