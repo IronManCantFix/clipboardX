@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:start": "./scripts/dev.sh",
+    "dev:stop": "lsof -ti :1420 | xargs kill 2>/dev/null; pkill -f target/debug/clipboardx 2>/dev/null; true"
   },
   "license": "MIT",
   "dependencies": {
