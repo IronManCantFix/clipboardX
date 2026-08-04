@@ -32,12 +32,12 @@ pub fn run() {
                 .map_err(|e| format!("db open failed: {e}"))?;
             let settings = settings::SettingsStore::load(&data_dir.join("settings.json"))
                 .map_err(|e| format!("settings load failed: {e}"))?;
-            let state = std::sync::Arc::new(commands::AppState {
+            let state = commands::AppState {
                 store: std::sync::Mutex::new(store),
                 settings: std::sync::Mutex::new(settings),
                 data_dir: data_dir.clone(),
-            });
-            app.manage(state.clone());
+            };
+            app.manage(state);
 
             // 设置窗口（隐藏，由托盘/齿轮打开）。dev 下 SvelteKit 路由为 /settings，
             // 生产构建产物为 settings.html
@@ -96,7 +96,7 @@ pub fn run() {
                 .map_err(|e| format!("register shortcut failed: {e}"))?;
 
             // 启动剪贴板监听线程
-            listener::spawn_listener(app.handle().clone(), state);
+            listener::spawn_listener(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

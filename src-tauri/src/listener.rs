@@ -57,9 +57,9 @@ use crate::store::NewEntry;
 use chrono::Utc;
 use std::path::Path;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
-pub fn spawn_listener(app: AppHandle, state: std::sync::Arc<AppState>) {
+pub fn spawn_listener(app: AppHandle) {
     std::thread::spawn(move || {
         let mut last_count = read_clipboard().change_count;
         let mut last_detected: Option<Detected> = None;
@@ -70,6 +70,7 @@ pub fn spawn_listener(app: AppHandle, state: std::sync::Arc<AppState>) {
                 continue;
             }
             last_count = snap.change_count;
+            let state = app.state::<AppState>();
             let Some(detected) = classify(&snap) else {
                 continue;
             };
