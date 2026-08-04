@@ -105,11 +105,15 @@ pub fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
     ensure_settings_window(&app)
 }
 
-/// 懒创建设置窗口：平时不占内存，关闭后销毁，下次打开再重建。
+/// 懒创建设置窗口：平时不占内存，关闭隐藏而非销毁，下次打开瞬间生效。
 pub fn ensure_settings_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("settings") {
-        win.show().map_err(|e| e.to_string())?;
-        win.set_focus().map_err(|e| e.to_string())?;
+        let w = win;
+        // 推迟到下一帧：macOS accessory app 在菜单回调里无法同期 set_focus
+        let _ = app.run_on_main_thread(Box::new(move || {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }));
         return Ok(());
     }
     let settings_url = if cfg!(debug_assertions) {
@@ -117,12 +121,27 @@ pub fn ensure_settings_window(app: &tauri::AppHandle) -> Result<(), String> {
     } else {
         tauri::WebviewUrl::App("settings.html".into())
     };
-    tauri::WebviewWindowBuilder::new(app, "settings", settings_url)
+    let win = tauri::WebviewWindowBuilder::new(app, "settings", settings_url)
         .title("ClipboardX 设置")
         .inner_size(560.0, 640.0)
         .resizable(false)
+        .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
+    // 关闭时隐藏而非销毁，避免下次冷启动 WebView
+    let hide_win = win.clone();
+    win.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = hide_win.hide();
+        }
+    });
+    // WebView 冷启动需要一个 runloop cycle，推到下一帧再显示
+    let w = win;
+    let _ = app.run_on_main_thread(Box::new(move || {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }));
     Ok(())
 }
 
