@@ -25,3 +25,18 @@ pub struct Entry {
     pub created_at: i64,
     pub last_used_at: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settings {
+    pub history_limit: i64,
+    pub shortcut: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            history_limit: 15,
+            shortcut: "Command+Shift+V".into(),
+        }
+    }
+}
