@@ -2,115 +2,114 @@
 
 ![Build](https://github.com/IronManCantFix/clipboardX/actions/workflows/build.yml/badge.svg)
 
-A modern, minimal clipboard manager for macOS — native feel, fully offline, low memory.
+专为 macOS 打造的现代化剪贴板管理器 —— 原生体验、完全离线、低内存占用。
 
-[简体中文](README.zh-CN.md)
+[English](README.en.md)
 
-## Features
+## 功能特性
 
-- **Global shortcut** — summon the popover anywhere with `⌘⇧V` (customizable)
-- **Clipboard history** — text, URLs, files, folders, images (PNG/JPEG/GIF/TIFF/HEIC)
-- **Smart dedupe** — copying the same content again moves it to the top instead of duplicating
-- **Instant search** — fuzzy or exact matching, case-insensitive, under 50ms
-- **Pin** — keep important entries pinned on top (pinned items are never auto-cleaned)
-- **Images** — thumbnail previews in the list, original images loaded on demand
-- **Global dedupe** — duplicate content moves to front without repetition
-- **Screen-aware positioning** — the popover stays on-screen near your cursor
-- **Auto cleanup** — by count (default 15, up to 100) with pinned items protected
-- **Excluded apps** — optionally ignore copies from password managers and terminals
-- **Menu-bar app** — no Dock icon, launches at login (optional)
-- **Fully offline** — no network, no telemetry, no cloud
+- **全局快捷键** —— 任意位置按 `⌘⇧V` 唤起弹窗（可自定义）
+- **剪贴板历史** —— 文本、URL、文件、文件夹、图片（PNG/JPEG/GIF/TIFF/HEIC）
+- **智能去重** —— 重复复制相同内容自动移到最前，不产生重复记录
+- **实时搜索** —— 模糊/精准匹配、忽略大小写，响应 <50ms
+- **固定（Pin）** —— 重要内容置顶，固定项永不被自动清理
+- **图片支持** —— 列表内缩略图预览，原图按需加载不占内存
+- **屏幕自适应定位** —— 弹窗跟随鼠标，自动避开屏幕边缘
+- **自动清理** —— 按条数（默认 15，最大 100），固定项受保护
+- **排除应用** —— 可忽略密码管理器、终端等应用的复制内容
+- **菜单栏应用** —— 无 Dock 图标，支持开机自启
+- **完全本地化** —— 不联网、不收集数据、无云服务
 
-## Tech Stack
+## 技术栈
 
 - [Tauri 2](https://tauri.app) + Rust
-- [Svelte 5](https://svelte.dev) (SvelteKit)
-- [SQLite](https://sqlite.org) (rusqlite)
+- [Svelte 5](https://svelte.dev)（SvelteKit）
+- [SQLite](https://sqlite.org)（rusqlite）
 - [Vite](https://vite.dev)
 
-## Development
+## 开发
 
-Prerequisites: Node.js ≥ 20, Rust stable, Xcode Command Line Tools.
+环境要求：Node.js ≥ 20、Rust stable、Xcode Command Line Tools。
 
 ```bash
-# Install frontend dependencies
+# 安装前端依赖
 npm install
 
-# Start dev (auto-releases port 1420 on exit)
+# 启动开发（退出时自动释放 1420 端口）
 npm run dev:start
 
-# Manual cleanup if port 1420 is stuck
+# 端口被占时手动清理
 npm run dev:stop
 ```
 
-## Build
+## 构建
 
 ```bash
-# Build the macOS app for Apple Silicon
+# 构建 macOS 应用（Apple 芯片）
 npm run tauri build
 
-# Output: src-tauri/target/release/bundle/
+# 产物位置：src-tauri/target/release/bundle/
 ```
 
-## CI Build
+## CI 构建
 
-GitHub Actions builds the macOS (Apple Silicon) app on every tag push (`v*`) and uploads the `.dmg` / `.app.zip` to a **draft** GitHub Release — see [`.github/workflows/build.yml`](.github/workflows/build.yml). Publish the draft to make it downloadable.
+GitHub Actions 会在推送 `v*` 标签时自动构建 macOS（Apple 芯片）应用，并把构建产物（`.dmg` / `.app.zip`）上传到 GitHub Releases 的**草稿**中，见 [`.github/workflows/build.yml`](.github/workflows/build.yml)。在 Release 页面发布草稿后即可供下载。
 
-## Installing on macOS (unsigned app)
+## macOS 安装（未签名应用）
 
-Builds from this repo are **not signed with an Apple Developer ID** (that requires a paid Apple Developer account) and are not notarized, so Gatekeeper blocks the first launch. Use any of these:
+本仓库构建的应用**没有 Apple Developer ID 签名**（签名需要付费的 Apple 开发者账号），也未经过公证（notarization），因此首次打开会被 Gatekeeper 拦截。按以下任一方式处理：
 
-- **Option 1 (recommended): right-click → Open** — Control-click (or right-click) `ClipboardX.app` in Finder, choose **Open**, then click **Open** in the dialog.
-- **Option 2: System Settings** — after the first blocked attempt, go to **System Settings → Privacy & Security**, find the ClipboardX warning and click **Open Anyway**.
-- **Option 3: remove the quarantine flag** — run this once, then double-click normally:
+- **方式一（推荐）：右键 → 打开** — 在访达中按住 Control 键（或右键）点击 `ClipboardX.app`，选择**打开**，再点击对话框中的**打开**。
+- **方式二：系统设置** — 先双击被拦截一次，再进入**系统设置 → 隐私与安全性**，找到 ClipboardX 的提示，点击**仍要打开**。
+- **方式三：命令行移除隔离属性** — 执行一次以下命令，之后即可正常双击打开：
 
   ```bash
   xattr -dr com.apple.quarantine /Applications/ClipboardX.app
   ```
 
-If macOS says the app “is damaged and can't be opened” (usually a broken download or stripped signature), re-download it or run:
+如果提示「应用已损坏，无法打开」（通常是下载不完整或签名被剥离），请重新下载，或执行：
 
 ```bash
 xattr -cr /Applications/ClipboardX.app
 ```
 
-> Only install apps from sources you trust. There is no need to disable Gatekeeper entirely (`spctl --master-disable`).
+> 请只安装可信来源的应用。无需关闭整个 Gatekeeper（`spctl --master-disable`）。
 
-## Shortcuts
+## 快捷键
 
-| Action | Shortcut |
+| 操作 | 快捷键 |
 |---|---|
-| Show popover | `⌘⇧V` (customizable) |
-| Paste & close | `⏎` |
-| Navigate | `↑` / `↓` |
-| Pin / unpin | `⌘P` |
-| Delete | `⌫` |
-| Switch tab | `⌘1` / `⌘2` |
-| Close | `Esc` |
+| 唤起弹窗 | `⌘⇧V`（可自定义） |
+| 粘贴并关闭 | `⏎` |
+| 上下选择 | `↑` / `↓` |
+| 固定 / 取消固定 | `⌘P` |
+| 删除 | `⌫` |
+| 切换标签 | `⌘1` / `⌘2` |
+| 关闭 | `Esc` |
 
-## Settings
+## 设置
 
-Open via the tray icon or the gear button in the popover:
+通过托盘图标或弹窗右上角齿轮打开设置：
 
-- History limit, auto-cleanup
-- Appearance: opacity, window size (auto / custom), image preview height
-- Search: on/off, fuzzy / exact
-- Position: follow cursor / center screen
-- Global shortcut recorder
-- Launch at login
-- Storage stats + clear image cache
-- Update check
+- 历史条数上限、自动清理
+- 外观：透明度、窗口尺寸（自动/自定义）、图片预览高度
+- 搜索：开关、模糊/精准模式
+- 位置：跟随鼠标 / 屏幕居中
+- 快捷键录制
+- 开机自启
+- 存储统计 + 清除图片缓存
+- 检查更新
 
-## Data
+## 数据存储
 
-All data stays local:
+所有数据均保存在本地：
 
 ```
 ~/Library/Application Support/com.clipboardx.app/
-├── entries.db      # history database
-└── images/         # captured images (PNG)
+├── entries.db      # 历史记录数据库
+└── images/         # 捕获的图片（PNG）
 ```
 
-## License
+## 许可证
 
 [MIT](LICENSE)
