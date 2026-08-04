@@ -324,3 +324,193 @@ mod tests {
         assert!(s.find_by_content(EntryType::Url, "same").unwrap().is_none());
     }
 }
+
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn tmp_store() -> Store {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir()
+            .join(format!("clipboardx-test-{}-{}-{}", std::process::id(), nanos, n));
+        std::fs::create_dir_all(&dir).unwrap();
+        Store::open(&dir.join("test.db")).unwrap()
+    }
+
+    fn text_entry(content: &str, last_used: i64) -> NewEntry {
+        NewEntry {
+            kind: EntryType::Text,
+            content: content.into(),
+            content_hash: None,
+            rtf_data: None,
+            image_path: None,
+            thumb_path: None,
+            file_paths: vec![],
+            source_app: Some("Test".into()),
+            created_at: last_used,
+            last_used_at: last_used,
+        }
+    }
+
+    fn url_entry(content: &str, last_used: i64) -> NewEntry {
+        NewEntry {
+            kind: EntryType::Url,
+            content: content.into(),
+            content_hash: None,
+            rtf_data: None,
+            image_path: None,
+            thumb_path: None,
+            file_paths: vec![],
+            source_app: Some("Test".into()),
+            created_at: last_used,
+            last_used_at: last_used,
+        }
+    }
+
+    fn file_entry(paths: Vec<&str>, last_used: i64) -> NewEntry {
+        NewEntry {
+            kind: EntryType::File,
+            content: paths.join(", "),
+            content_hash: None,
+            rtf_data: None,
+            image_path: None,
+            thumb_path: None,
+            file_paths: paths.into_iter().map(String::from).collect(),
+            source_app: Some("Test".into()),
+            created_at: last_used,
+            last_used_at: last_used,
+        }
+    }
+
+    fn rtf_entry(data: Vec<u8>, last_used: i64) -> NewEntry {
+        NewEntry {
+            kind: EntryType::Rtf,
+            content: "[富文本]".into(),
+            content_hash: None,
+            rtf_data: Some(data),
+            image_path: None,
+            thumb_path: None,
+            file_paths: vec![],
+            source_app: Some("Test".into()),
+            created_at: last_used,
+            last_used_at: last_used,
+        }
+    }
+
+    fn image_entry(hash: i64, last_used: i64) -> NewEntry {
+        NewEntry {
+            kind: EntryType::Image,
+            content: "[图片]".into(),
+            content_hash: Some(hash),
+            rtf_data: None,
+            image_path: Some(format!("/tmp/{hash}.png")),
+            thumb_path: Some(format!("/tmp/{hash}_thumb.png")),
+            file_paths: vec![],
+            source_app: Some("Test".into()),
+            created_at: last_used,
+            last_used_at: last_used,
+        }
+    }
+
+    #[test]
+    fn insert_and_list_all_types() {
+        let s = tmp_store();
+        let id_text = s.insert(&text_entry("hello", 100)).unwrap();
+        let id_url = s.insert(&url_entry("https://example.com", 200)).unwrap();
+        let id_file = s.insert(&file_entry(vec!["/tmp/a.txt"], 300)).unwrap();
+        let id_rtf = s.insert(&rtf_entry(vec![0x7b, 0x5c, 0x72, 0x74, 0x66], 400)).unwrap();
+        let id_img = s.insert(&image_entry(123, 500)).unwrap();
+
+        let list = s.list().unwrap();
+        assert_eq!(list.len(), 5);
+
+        let img = list.iter().find(|e| e.kind == EntryType::Image).unwrap();
+        assert_eq!(img.content_hash, Some(123));
+        assert_eq!(img.image_path, Some("/tmp/123.png".to_string()));
+
+        let file = list.iter().find(|e| e.kind == EntryType::File).unwrap();
+        assert_eq!(file.file_paths, vec!["/tmp/a.txt".to_string()]);
+
+        // rtf_data 属于大字段，light 查询不加载，需用 get 验证
+        let rtf = s.get(id_rtf).unwrap().unwrap();
+        assert_eq!(rtf.rtf_data, Some(vec![0x7b, 0x5c, 0x72, 0x74, 0x66]));
+
+        // 其余 ID 均为有效记录
+        assert!(s.get(id_text).unwrap().is_some());
+        assert!(s.get(id_url).unwrap().is_some());
+        assert!(s.get(id_file).unwrap().is_some());
+        assert!(s.get(id_img).unwrap().is_some());
+    }
+
+    #[test]
+    fn prune_keeps_pinned_across_types() {
+        let s = tmp_store();
+        let id_pinned = s.insert(&text_entry("pinned", 100)).unwrap();
+        s.set_pinned(id_pinned, true).unwrap();
+        s.insert(&image_entry(1, 200)).unwrap();
+        s.insert(&url_entry("https://x.dev", 300)).unwrap();
+
+        let removed = s.prune(1).unwrap();
+        assert!(removed.iter().any(|e| e.kind == EntryType::Image || e.kind == EntryType::Url));
+
+        let list = s.list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, id_pinned);
+    }
+
+    #[test]
+    fn dedupe_for_each_type() {
+        let s = tmp_store();
+
+        // store.insert 本身不 dedupe；这里验证 find_by_content 能正确查找
+        let id_text = s.insert(&text_entry("dup", 100)).unwrap();
+        assert_eq!(s.find_by_content(EntryType::Text, "dup").unwrap(), Some(id_text));
+        assert!(s.find_by_content(EntryType::Text, "missing").unwrap().is_none());
+
+        let id_url = s.insert(&url_entry("https://same", 300)).unwrap();
+        assert_eq!(s.find_by_content(EntryType::Url, "https://same").unwrap(), Some(id_url));
+
+        let id_file = s.insert(&file_entry(vec!["/tmp/x.txt"], 500)).unwrap();
+        assert_eq!(s.find_by_content(EntryType::File, "/tmp/x.txt").unwrap(), Some(id_file));
+
+        let id_rtf = s.insert(&rtf_entry(vec![1, 2, 3], 700)).unwrap();
+        assert_eq!(s.find_by_content(EntryType::Rtf, "[富文本]").unwrap(), Some(id_rtf));
+
+        // 各类型之间 content 相同也不应互相匹配
+        assert!(s.find_by_content(EntryType::Text, "[富文本]").unwrap().is_none());
+        assert!(s.find_by_content(EntryType::Url, "dup").unwrap().is_none());
+    }
+
+    #[test]
+    fn dedupe_image_by_content_hash() {
+        let s = tmp_store();
+
+        let id_a = s.insert(&image_entry(111, 100)).unwrap();
+        s.find_by_content_hash(111).unwrap();
+        assert_eq!(s.find_by_content_hash(111).unwrap(), Some(id_a));
+
+        let id_b = s.insert(&image_entry(222, 300)).unwrap();
+        assert_eq!(s.find_by_content_hash(222).unwrap(), Some(id_b));
+        assert!(s.find_by_content_hash(333).unwrap().is_none());
+    }
+
+    #[test]
+    fn all_image_paths_returns_both_paths() {
+        let s = tmp_store();
+        s.insert(&image_entry(1, 100)).unwrap();
+        s.insert(&image_entry(2, 200)).unwrap();
+
+        let paths = s.all_image_paths().unwrap();
+        assert!(paths.contains(&"/tmp/1.png".to_string()));
+        assert!(paths.contains(&"/tmp/1_thumb.png".to_string()));
+        assert!(paths.contains(&"/tmp/2.png".to_string()));
+        assert!(paths.contains(&"/tmp/2_thumb.png".to_string()));
+    }
+}
