@@ -72,6 +72,32 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 清理 images 目录中未被数据库引用的孤儿文件（早期版本去重 bug 的残留）。
+pub fn cleanup_orphan_images(data_dir: &std::path::Path, store: &crate::store::Store) {
+    let images_dir = data_dir.join("images");
+    let Ok(entries) = store.all_image_paths() else {
+        return;
+    };
+    let referenced: std::collections::HashSet<&str> =
+        entries.iter().map(|s| s.as_str()).collect();
+    let Ok(rd) = std::fs::read_dir(&images_dir) else {
+        return;
+    };
+    let mut removed = 0u32;
+    for entry in rd.flatten() {
+        let path = entry.path();
+        let Some(ps) = path.to_str() else { continue };
+        if !referenced.contains(ps) {
+            if std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    if removed > 0 {
+        println!("[clipboardx] cleaned up {removed} orphan image file(s)");
+    }
+}
+
 pub fn spawn_listener(app: AppHandle) {
     std::thread::spawn(move || {
         let mut last_count = change_count();
@@ -323,5 +349,39 @@ mod tests {
         let b = Detected::Image(222);
         assert!(!same_content(&a, &b));
         assert!(same_content(&a, &Detected::Image(111)));
+    }
+
+    #[test]
+    fn cleanup_removes_only_orphan_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "clipboardx-orphan-test-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let images = dir.join("images");
+        std::fs::create_dir_all(&images).unwrap();
+        let orphan = images.join("orphan.png");
+        let kept = images.join("kept.png");
+        std::fs::write(&orphan, b"x").unwrap();
+        std::fs::write(&kept, b"x").unwrap();
+
+        let store = crate::store::Store::open(&dir.join("test.db")).unwrap();
+        let new_entry = crate::store::NewEntry {
+            kind: crate::models::EntryType::Image,
+            content: "[图片]".into(),
+            content_hash: Some(1),
+            rtf_data: None,
+            image_path: Some(kept.to_string_lossy().into_owned()),
+            thumb_path: None,
+            file_paths: vec![],
+            source_app: None,
+            created_at: 1,
+            last_used_at: 1,
+        };
+        store.insert(&new_entry).unwrap();
+
+        cleanup_orphan_images(&dir, &store);
+        assert!(!orphan.exists(), "orphan file should be removed");
+        assert!(kept.exists(), "referenced file should be kept");
     }
 }

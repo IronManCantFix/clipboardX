@@ -123,6 +123,25 @@ impl Store {
         rows.next().transpose()
     }
 
+    /// 返回数据库当前引用的全部图片文件路径（原图 + 缩略图）。
+    pub fn all_image_paths(&self) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT image_path, thumb_path FROM entries WHERE type = 'image'")?;
+        let rows = stmt.query_map([], |r| {
+            let a: Option<String> = r.get(0)?;
+            let b: Option<String> = r.get(1)?;
+            Ok(vec![a, b])
+        })?;
+        let mut out = vec![];
+        for row in rows {
+            for p in row?.into_iter().flatten() {
+                out.push(p);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn list(&self) -> rusqlite::Result<Vec<Entry>> {
         self.query_light(
             &format!(

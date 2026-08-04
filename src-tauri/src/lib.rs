@@ -99,6 +99,13 @@ pub fn run() {
             shortcut::register_shortcut(app.handle(), &shortcut_str)
                 .map_err(|e| format!("register shortcut failed: {e}"))?;
 
+            // 清理历史遗留的孤儿图片文件（未被数据库引用的）
+            {
+                let app_state = app.state::<crate::commands::AppState>();
+                let store = app_state.store.lock().unwrap();
+                listener::cleanup_orphan_images(&data_dir, &store);
+            }
+
             // 启动剪贴板监听线程
             listener::spawn_listener(app.handle().clone());
             Ok(())
