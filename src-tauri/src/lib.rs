@@ -19,6 +19,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             shortcut::set_accessory_policy();
             // 主窗口原生失焦隐藏（macOS 上最可靠的隐藏触发）

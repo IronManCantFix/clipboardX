@@ -12,6 +12,7 @@
     "core:window:allow-set-size",
     "core:window:allow-hide",
     "core:window:allow-show",
-    "core:window:allow-center"
+    "core:window:allow-center",
+    "dialog:default"
   ]
 }

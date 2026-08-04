@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
+  import { confirm } from '@tauri-apps/plugin-dialog';
   import { api, type Settings, type StorageStats } from '../../lib/api';
 
   let settings = $state<Settings>({
@@ -92,7 +93,11 @@
   }
 
   async function clearHistory() {
-    if (!confirm('确定清空历史记录吗？固定条目会保留。')) return;
+    const ok = await confirm('确定清空历史记录吗？固定条目会保留。', {
+      title: 'ClipboardX',
+      kind: 'warning',
+    });
+    if (!ok) return;
     const n = await api.clearHistory();
     status = `已清空 ${n} 条记录`;
     await loadHistory();
@@ -128,7 +133,11 @@
   }
 
   async function clearImages() {
-    if (!confirm('确定清除全部图片缓存吗？图片历史条目也会被删除。')) return;
+    const ok = await confirm('确定清除全部图片缓存吗？图片历史条目也会被删除。', {
+      title: 'ClipboardX',
+      kind: 'warning',
+    });
+    if (!ok) return;
     await api.clearImages();
     status = '图片缓存已清除';
     void loadStats();
