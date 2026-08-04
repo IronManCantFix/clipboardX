@@ -76,6 +76,20 @@ xattr -cr /Applications/ClipboardX.app
 
 > Only install apps from sources you trust. There is no need to disable Gatekeeper entirely (`spctl --master-disable`).
 
+## Accessibility Permission (required for auto-paste)
+
+ClipboardX simulates `⌘V` to auto-paste, which requires macOS Accessibility permission. The system will prompt you on first paste.
+
+Steps:
+
+1. On first paste, the system shows an Accessibility permission dialog
+2. Go to **System Settings → Privacy & Security → Accessibility**
+3. Find ClipboardX and toggle it on
+4. **Fully quit ClipboardX** (tray icon → Quit) and reopen it
+5. Paste again — it should now work
+
+> **Switching from dev to release builds**: if an old entry with the same name already exists in the Accessibility list, remove it first (click the minus button), then re-add the new version. macOS permissions are bound per-binary; different builds are not interchangeable.
+
 ## Shortcuts
 
 | Action | Shortcut |

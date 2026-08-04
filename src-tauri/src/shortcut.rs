@@ -31,11 +31,18 @@ pub fn ax_is_trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
-/// 检查辅助功能权限，未授权时弹出系统授权对话框。
+/// 是否已在本会话中弹过辅助功能授权对话框（避免每次粘贴都弹）。
+static AX_PROMPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 检查辅助功能权限。未授权时仅首次弹出系统授权对话框，之后静默。
 /// release 构建的二进制与 dev 不同，需要单独授权。
 pub fn ax_check_and_prompt() -> bool {
     if ax_is_trusted() {
         return true;
+    }
+    // 本会话已弹过，不再重复弹窗
+    if AX_PROMPTED.swap(true, Ordering::SeqCst) {
+        return false;
     }
     unsafe {
         let key = kAXTrustedCheckOptionPrompt;
