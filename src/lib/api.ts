@@ -20,6 +20,22 @@ export interface Entry {
 export interface Settings {
   history_limit: number;
   shortcut: string;
+  opacity: number;
+  window_mode: 'auto' | 'custom';
+  window_width: number;
+  window_height: number;
+  search_enabled: boolean;
+  search_mode: 'fuzzy' | 'exact';
+  position_mode: 'cursor' | 'center';
+  image_preview_height: number;
+}
+
+export interface StorageStats {
+  db_size: number;
+  images_dir: string;
+  images_size: number;
+  image_count: number;
+  entry_count: number;
 }
 
 export const api = {
@@ -30,6 +46,9 @@ export const api = {
   paste: (id: number) => invoke('paste_entry', { id }),
   getSettings: () => invoke<Settings>('get_settings'),
   showSettings: () => invoke('show_settings'),
+  positionPopover: () => invoke('position_popover'),
+  getStorageStats: () => invoke<StorageStats>('get_storage_stats'),
+  clearImages: () => invoke('clear_images'),
   updateSettings: (settings: Settings) => invoke('update_settings', { settings }),
 };
 

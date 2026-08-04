@@ -97,6 +97,20 @@ impl Store {
         rows.collect()
     }
 
+    /// 按类型与内容查找已有条目（用于全局去重）。
+    pub fn find_by_content(
+        &self,
+        kind: EntryType,
+        content: &str,
+    ) -> rusqlite::Result<Option<i64>> {
+        let kind_str = serde_json::to_string(&kind).unwrap().trim_matches('"').to_string();
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM entries WHERE type = ?1 AND content = ?2 LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![kind_str, content], |r| r.get(0))?;
+        rows.next().transpose()
+    }
+
     pub fn set_pinned(&self, id: i64, pinned: bool) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE entries SET pinned = ?1 WHERE id = ?2",
@@ -111,6 +125,17 @@ impl Store {
             params![at, id],
         )?;
         Ok(())
+    }
+
+    pub fn count(&self) -> rusqlite::Result<i64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))
+    }
+
+    pub fn delete_by_type(&self, kind: EntryType) -> rusqlite::Result<usize> {
+        let kind_str = serde_json::to_string(&kind).unwrap().trim_matches('"').to_string();
+        self.conn
+            .execute("DELETE FROM entries WHERE type = ?1", params![kind_str])
     }
 
     pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
@@ -204,6 +229,17 @@ mod tests {
         let removed = s.prune(1).unwrap();
         assert!(removed.iter().any(|&id| id != id_old));
         assert_eq!(s.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn find_by_content_dedupe_lookup() {
+        let s = tmp_store();
+        let id_a = s.insert(&text_entry("same", 100)).unwrap();
+        let _ = s.insert(&text_entry("other", 200)).unwrap();
+        let found = s.find_by_content(EntryType::Text, "same").unwrap();
+        assert_eq!(found, Some(id_a));
+        assert!(s.find_by_content(EntryType::Text, "nope").unwrap().is_none());
+        assert!(s.find_by_content(EntryType::Url, "same").unwrap().is_none());
     }
 
     #[test]

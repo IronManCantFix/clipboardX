@@ -1,4 +1,5 @@
-use crate::models::Settings;
+use crate::models::{EntryType, Settings};
+use serde::Serialize;
 use crate::settings::SettingsStore;
 use crate::store::Store;
 use std::sync::Mutex;
@@ -91,6 +92,71 @@ pub fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct StorageStats {
+    pub db_size: u64,
+    pub images_dir: String,
+    pub images_size: u64,
+    pub image_count: i64,
+    pub entry_count: i64,
+}
+
+fn dir_size(dir: &std::path::Path) -> u64 {
+    let mut total = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            if let Ok(md) = entry.metadata() {
+                if md.is_file() {
+                    total += md.len();
+                }
+            }
+        }
+    }
+    total
+}
+
+#[tauri::command]
+pub fn get_storage_stats(state: tauri::State<'_, AppState>) -> Result<StorageStats, String> {
+    let data_dir = &state.data_dir;
+    let db_size = std::fs::metadata(data_dir.join("entries.db"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let images_dir = data_dir.join("images");
+    let images_size = dir_size(&images_dir);
+    let image_count = std::fs::read_dir(&images_dir).map(|rd| rd.count() as i64).unwrap_or(0);
+    let entry_count = state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .count()
+        .map_err(|e| e.to_string())?;
+    Ok(StorageStats {
+        db_size,
+        images_dir: images_dir.to_string_lossy().into_owned(),
+        images_size,
+        image_count,
+        entry_count,
+    })
+}
+
+#[tauri::command]
+pub fn clear_images(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let images_dir = state.data_dir.join("images");
+    if images_dir.exists() {
+        for entry in std::fs::read_dir(&images_dir).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .delete_by_type(EntryType::Image)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

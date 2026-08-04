@@ -29,6 +29,19 @@ impl SettingsStore {
         if self.settings.shortcut.trim().is_empty() {
             self.settings.shortcut = "Command+Shift+V".into();
         }
+        self.settings.opacity = self.settings.opacity.clamp(0.3, 1.0);
+        self.settings.window_width = self.settings.window_width.clamp(220, 800);
+        self.settings.window_height = self.settings.window_height.clamp(200, 1200);
+        self.settings.image_preview_height = self.settings.image_preview_height.clamp(24, 200);
+        if !matches!(self.settings.window_mode.as_str(), "auto" | "custom") {
+            self.settings.window_mode = "auto".into();
+        }
+        if !matches!(self.settings.search_mode.as_str(), "fuzzy" | "exact") {
+            self.settings.search_mode = "fuzzy".into();
+        }
+        if !matches!(self.settings.position_mode.as_str(), "cursor" | "center") {
+            self.settings.position_mode = "cursor".into();
+        }
     }
 
     pub fn save(&mut self) -> anyhow::Result<()> {

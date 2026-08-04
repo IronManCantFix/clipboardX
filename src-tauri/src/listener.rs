@@ -110,8 +110,16 @@ pub fn spawn_listener(app: AppHandle) {
             let limit = state.settings.lock().unwrap().settings.history_limit;
             {
                 let store = state.store.lock().unwrap();
-                let _ = store.insert(&new_entry);
-                let _ = store.prune(limit);
+                // 全局去重：内容已存在则移到最前，不重复插入
+                match store.find_by_content(kind, &new_entry.content) {
+                    Ok(Some(existing_id)) => {
+                        let _ = store.touch(existing_id, now);
+                    }
+                    _ => {
+                        let _ = store.insert(&new_entry);
+                        let _ = store.prune(limit);
+                    }
+                }
             }
             println!(
                 "[clipboardx] captured {:?} from {}",

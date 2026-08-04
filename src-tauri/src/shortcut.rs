@@ -1,11 +1,15 @@
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplicationActivationOptions, NSApplicationActivationPolicy};
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Mutex;
 use tauri::{AppHandle, LogicalPosition, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
 /// 唤起弹窗时记录的前台应用 pid，粘贴时用于把焦点还给它。
 static LAST_FRONT_APP_PID: AtomicI32 = AtomicI32::new(0);
+
+/// 唤起时记录的鼠标位置，用于弹窗避让定位。
+static LAST_CURSOR: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 
 /// 设为菜单栏应用（不显示 Dock 图标）。
 pub fn set_accessory_policy() {
@@ -69,13 +73,86 @@ pub fn cursor_position() -> Option<(f64, f64)> {
 pub fn show_popover(app: &AppHandle) {
     remember_front_app();
     activate_app();
+    let mode = app
+        .state::<crate::commands::AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .settings
+        .position_mode
+        .clone();
+    if let Some(cursor) = cursor_position() {
+        *LAST_CURSOR.lock().unwrap() = Some(cursor);
+    }
     if let Some(win) = app.get_webview_window("main") {
-        if let Some((x, y)) = cursor_position() {
-            let _ = win.set_position(LogicalPosition::new(x, y));
+        if mode == "center" {
+            let _ = win.center();
+        } else {
+            let _ = position_window(&win, None);
         }
         let _ = win.show();
         let _ = win.set_focus();
     }
+}
+
+/// 主屏幕逻辑坐标边界 (x, y, w, h)。
+fn main_screen_bounds() -> Option<(f64, f64, f64, f64)> {
+    objc2::rc::autoreleasepool(|_| {
+        let marker = MainThreadMarker::new()?;
+        let screen = objc2_app_kit::NSScreen::mainScreen(marker)?;
+        let f = screen.frame();
+        Some((f.origin.x, f.origin.y, f.size.width, f.size.height))
+    })
+}
+
+/// 将窗口定位到鼠标附近，超出屏幕边缘时自动向内避让。
+fn position_window(
+    win: &tauri::WebviewWindow,
+    size_override: Option<(f64, f64)>,
+) -> Result<(), String> {
+    let scale = win.scale_factor().map_err(|e| e.to_string())?;
+    let (w, h) = match size_override {
+        Some(sz) => sz,
+        None => {
+            let size = win.outer_size().map_err(|e| e.to_string())?;
+            (size.width as f64 / scale, size.height as f64 / scale)
+        }
+    };
+    let Some((sx, sy, sw, sh)) = main_screen_bounds() else {
+        return Ok(());
+    };
+    let margin = 8.0;
+    let (mut x, mut y) = LAST_CURSOR.lock().unwrap().unwrap_or((sx + sw / 2.0, sy + sh / 2.0));
+    if x + w > sx + sw - margin {
+        x = sx + sw - w - margin;
+    }
+    if y + h > sy + sh - margin {
+        y = sy + sh - h - margin;
+    }
+    x = x.max(sx + margin);
+    y = y.max(sy + margin);
+    win.set_position(LogicalPosition::new(x, y))
+        .map_err(|e| e.to_string())
+}
+
+/// 弹窗尺寸变化后重新定位（前端在 setSize 后调用）。居中模式不移动。
+#[tauri::command]
+pub fn position_popover(app: tauri::AppHandle) -> Result<(), String> {
+    let mode = app
+        .state::<crate::commands::AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .settings
+        .position_mode
+        .clone();
+    if mode != "cursor" {
+        return Ok(());
+    }
+    if let Some(win) = app.get_webview_window("main") {
+        position_window(&win, None)?;
+    }
+    Ok(())
 }
 
 pub fn shortcut_handler() -> impl Fn(&AppHandle, &Shortcut, ShortcutEvent) + Send + Sync + 'static {

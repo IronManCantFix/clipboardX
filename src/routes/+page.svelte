@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
-  import { api, onNewEntry, type Entry } from '../lib/api';
+  import { api, onNewEntry, type Entry, type Settings } from '../lib/api';
   import { filterEntries } from '../lib/search';
   import TabBar from '../components/TabBar.svelte';
   import EntryRow from '../components/EntryRow.svelte';
@@ -11,8 +11,27 @@
   let tab: 'all' | 'pinned' = $state('all');
   let selected = $state(0);
   let searchInput: HTMLInputElement | undefined = $state();
+  let settings = $state<Settings>({
+    history_limit: 15,
+    shortcut: 'Command+Shift+V',
+    opacity: 0.9,
+    window_mode: 'auto',
+    window_width: 360,
+    window_height: 480,
+    search_enabled: true,
+    search_mode: 'fuzzy',
+    position_mode: 'cursor',
+    image_preview_height: 60,
+  });
 
-  let visibleEntries = $derived(filterEntries(entries, query));
+  const ROW_H = 32;
+  const FIXED_H = 110;
+  const EMPTY_H = 100;
+  const MAX_LIST_H = 15 * ROW_H;
+
+  let visibleEntries = $derived(
+    settings.search_enabled ? filterEntries(entries, query, settings.search_mode) : entries,
+  );
 
   async function refresh() {
     entries = await api.list(tab === 'pinned' ? 'pinned' : undefined);
@@ -24,8 +43,54 @@
     await refresh();
   }
 
+  function rowHeight(entry: Entry): number {
+    return entry.type === 'image'
+      ? Math.max(ROW_H, settings.image_preview_height + 12)
+      : ROW_H;
+  }
+
+  function applyHeight() {
+    const win = getCurrentWindow();
+    if (settings.window_mode === 'custom') {
+      void win.setSize(new LogicalSize(settings.window_width, settings.window_height));
+    } else {
+      const listH =
+        visibleEntries.length === 0
+          ? EMPTY_H
+          : Math.min(
+              visibleEntries.reduce((s, e) => s + rowHeight(e), 0),
+              MAX_LIST_H,
+            );
+      void win.setSize(new LogicalSize(settings.window_width, FIXED_H + listH));
+    }
+    void api.positionPopover();
+  }
+
+  $effect(() => {
+    visibleEntries;
+    settings.window_mode;
+    settings.window_width;
+    settings.window_height;
+    settings.image_preview_height;
+    applyHeight();
+  });
+
+  // 应用透明度
+  $effect(() => {
+    document.documentElement.style.setProperty('--pop-alpha', String(settings.opacity));
+  });
+
+  function openSettings() {
+    void api.showSettings();
+  }
+
   onMount(async () => {
     const win = getCurrentWindow();
+    try {
+      settings = await api.getSettings();
+    } catch {
+      /* 使用默认值 */
+    }
     await refresh();
     onNewEntry(refresh);
     searchInput?.focus();
@@ -33,7 +98,7 @@
     const onBlur = () => void win.hide();
     window.addEventListener('blur', onBlur);
     void win.onFocusChanged(({ payload: focused }) => {
-      if (focused) void refresh(); // 打开时兜底刷新，保证列表最新
+      if (focused) void refresh();
       else void win.hide();
     });
   });
@@ -65,26 +130,6 @@
     }
   }
 
-  function openSettings() {
-    void api.showSettings();
-  }
-
-  // 动态高度：条目 < 15 按实际数量，>= 15 按 15 行高度，多余滚动
-  const ROW_H = 32;
-  const FIXED_H = 110;
-  const EMPTY_H = 100;
-  const MAX_ROWS = 15;
-  const WIN_W = 360;
-  function applyHeight() {
-    const n = Math.max(1, Math.min(visibleEntries.length, MAX_ROWS));
-    const empty = visibleEntries.length === 0 ? EMPTY_H : 0;
-    void getCurrentWindow().setSize(new LogicalSize(WIN_W, FIXED_H + n * ROW_H + empty));
-  }
-  $effect(() => {
-    visibleEntries;
-    applyHeight();
-  });
-
   async function paste(entry: Entry) {
     try {
       await api.paste(entry.id);
@@ -99,8 +144,12 @@
 
 <div class="pop">
   <div class="search">
-    <input bind:this={searchInput} bind:value={query} placeholder="搜索剪贴板…" />
-    <button class="gear" onclick={openSettings} title="设置">⚙︎</button>
+    {#if settings.search_enabled}
+      <input bind:this={searchInput} bind:value={query} placeholder="搜索剪贴板…" />
+    {:else}
+      <div class="no-search"></div>
+    {/if}
+    <button class="gear" onclick={openSettings} title="设置" aria-label="设置">⚙︎</button>
   </div>
   <TabBar {tab} pinnedCount={entries.filter((e) => e.pinned).length} onswitch={switchTab} />
   <div class="list">
@@ -112,6 +161,7 @@
           {entry}
           selected={i === selected}
           {query}
+          thumbHeight={settings.image_preview_height}
           onselect={() => paste(entry)}
           onmouseenter={() => (selected = i)}
         />
@@ -129,6 +179,9 @@
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+  .no-search {
+    height: 28px;
   }
   .gear {
     background: none;
