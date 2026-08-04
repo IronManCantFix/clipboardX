@@ -56,14 +56,20 @@
   });
 
   function switchTab(id: string) {
-    if (tab === 'storage' && id !== 'storage') {
+    const leaving = tab === 'storage' && id !== 'storage';
+    tab = id;
+    if (leaving) {
       entries = []; // 离开存储页时释放 DOM
+      return;
     }
     if (id === 'storage') {
-      void loadStats();
-      void loadHistory();
+      stats = null; // 重置以显示 loading，避免渲染旧数据
+      // 延迟到下一帧，让 tab 切换先完成渲染
+      requestAnimationFrame(() => {
+        void loadStats();
+        void loadHistory();
+      });
     }
-    tab = id;
   }
 
   async function loadStats() {
@@ -90,8 +96,11 @@
     void save();
   }
 
+  const MAX_DISPLAY = 30;
+
   async function loadHistory() {
-    entries = await api.list();
+    const all = await api.list();
+    entries = all;
   }
 
   async function deleteOne(id: number) {
@@ -373,12 +382,12 @@
             <div class="field row">
               <div>
                 <span class="lbl">历史记录</span>
-                <p class="hint">{entries.length} 条 · 清空时保留固定项</p>
+                <p class="hint">{entries.length} 条{entries.length > MAX_DISPLAY ? ` · 仅显示最近 ${MAX_DISPLAY} 条` : ''} · 清空时保留固定项</p>
               </div>
               <button class="danger" onclick={clearHistory}>清空历史</button>
             </div>
             <div class="entry-list">
-              {#each entries as e (e.id)}
+              {#each entries.slice(0, MAX_DISPLAY) as e (e.id)}
                 <div class="entry">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                        stroke-linecap="round" stroke-linejoin="round" class="e-ico e-{e.type}">
