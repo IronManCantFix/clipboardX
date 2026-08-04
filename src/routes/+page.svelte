@@ -154,7 +154,16 @@
   <TabBar {tab} pinnedCount={entries.filter((e) => e.pinned).length} onswitch={switchTab} />
   <div class="list">
     {#if visibleEntries.length === 0}
-      <div class="empty">{query ? '无匹配结果' : '暂无剪贴板记录'}</div>
+      <div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="8" y="2" width="8" height="4" rx="1"/>
+          <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/>
+          <path d="M9 12h6M9 16h4"/>
+        </svg>
+        <p>{query ? '无匹配结果' : '暂无剪贴板记录'}</p>
+        {#if !query}<span>复制任何内容都会自动出现在这里</span>{/if}
+      </div>
     {:else}
       {#each visibleEntries as entry, i (entry.id)}
         <EntryRow
@@ -169,8 +178,8 @@
     {/if}
   </div>
   <div class="foot">
-    <span>↑↓ 选择 · ⏎ 粘贴</span>
-    <span>⌘P 固定 · ⌫ 删除 · Esc 关闭</span>
+    <span><kbd>↑↓</kbd> 选择 · <kbd>⏎</kbd> 粘贴</span>
+    <span><kbd>⌘P</kbd> 固定 · <kbd>⌫</kbd> 删除 · <kbd>Esc</kbd> 关闭</span>
   </div>
 </div>
 

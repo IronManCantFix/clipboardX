@@ -52,7 +52,7 @@ pub fn run() {
             };
             let settings_win = tauri::WebviewWindowBuilder::new(app, "settings", settings_url)
                 .title("ClipboardX 设置")
-                .inner_size(460.0, 640.0)
+                .inner_size(560.0, 640.0)
                 .resizable(false)
                 .visible(false)
                 .build()?;

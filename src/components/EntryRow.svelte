@@ -70,6 +70,10 @@
     padding: 6px 8px;
     border-radius: 7px;
     cursor: pointer;
+    transition: background 0.12s;
+  }
+  .row:hover {
+    background: var(--row-hover-bg, rgba(120, 120, 128, 0.12));
   }
   .row.selected {
     background: var(--selected-bg);
