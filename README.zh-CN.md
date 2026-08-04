@@ -55,6 +55,26 @@ npm run tauri build
 
 GitHub Actions 会在推送 `v*` 标签时自动构建 macOS（Apple 芯片）应用，并把构建产物（`.dmg` / `.app.zip`）上传到 GitHub Releases 的**草稿**中，见 [`.github/workflows/build.yml`](.github/workflows/build.yml)。在 Release 页面发布草稿后即可供下载。
 
+## macOS 安装（未签名应用）
+
+本仓库构建的应用**没有 Apple Developer ID 签名**（签名需要付费的 Apple 开发者账号），也未经过公证（notarization），因此首次打开会被 Gatekeeper 拦截。按以下任一方式处理：
+
+- **方式一（推荐）：右键 → 打开** — 在访达中按住 Control 键（或右键）点击 `ClipboardX.app`，选择**打开**，再点击对话框中的**打开**。
+- **方式二：系统设置** — 先双击被拦截一次，再进入**系统设置 → 隐私与安全性**，找到 ClipboardX 的提示，点击**仍要打开**。
+- **方式三：命令行移除隔离属性** — 执行一次以下命令，之后即可正常双击打开：
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/ClipboardX.app
+  ```
+
+如果提示「应用已损坏，无法打开」（通常是下载不完整或签名被剥离），请重新下载，或执行：
+
+```bash
+xattr -cr /Applications/ClipboardX.app
+```
+
+> 请只安装可信来源的应用。无需关闭整个 Gatekeeper（`spctl --master-disable`）。
+
 ## 快捷键
 
 | 操作 | 快捷键 |

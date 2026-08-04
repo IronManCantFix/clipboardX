@@ -56,6 +56,26 @@ npm run tauri build
 
 GitHub Actions builds the macOS (Apple Silicon) app on every tag push (`v*`) and uploads the `.dmg` / `.app.zip` to a **draft** GitHub Release — see [`.github/workflows/build.yml`](.github/workflows/build.yml). Publish the draft to make it downloadable.
 
+## Installing on macOS (unsigned app)
+
+Builds from this repo are **not signed with an Apple Developer ID** (that requires a paid Apple Developer account) and are not notarized, so Gatekeeper blocks the first launch. Use any of these:
+
+- **Option 1 (recommended): right-click → Open** — Control-click (or right-click) `ClipboardX.app` in Finder, choose **Open**, then click **Open** in the dialog.
+- **Option 2: System Settings** — after the first blocked attempt, go to **System Settings → Privacy & Security**, find the ClipboardX warning and click **Open Anyway**.
+- **Option 3: remove the quarantine flag** — run this once, then double-click normally:
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/ClipboardX.app
+  ```
+
+If macOS says the app “is damaged and can't be opened” (usually a broken download or stripped signature), re-download it or run:
+
+```bash
+xattr -cr /Applications/ClipboardX.app
+```
+
+> Only install apps from sources you trust. There is no need to disable Gatekeeper entirely (`spctl --master-disable`).
+
 ## Shortcuts
 
 | Action | Shortcut |
