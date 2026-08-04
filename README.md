@@ -54,7 +54,7 @@ npm run tauri build
 
 ## CI Build
 
-GitHub Actions builds the macOS (Apple Silicon) app on every tag push (`v*`) — see [`.github/workflows/build.yml`](.github/workflows/build.yml). Download the `.dmg` / `.app` from the release or workflow artifacts.
+GitHub Actions builds the macOS (Apple Silicon) app on every tag push (`v*`) and uploads the `.dmg` / `.app.zip` to a **draft** GitHub Release — see [`.github/workflows/build.yml`](.github/workflows/build.yml). Publish the draft to make it downloadable.
 
 ## Shortcuts
 

@@ -53,7 +53,7 @@ npm run tauri build
 
 ## CI 构建
 
-GitHub Actions 会在推送 `v*` 标签时自动构建 macOS（Apple 芯片）应用，见 [`.github/workflows/build.yml`](.github/workflows/build.yml)。构建产物（`.dmg` / `.app`）可从 Release 或 Actions 构件中下载。
+GitHub Actions 会在推送 `v*` 标签时自动构建 macOS（Apple 芯片）应用，并把构建产物（`.dmg` / `.app.zip`）上传到 GitHub Releases 的**草稿**中，见 [`.github/workflows/build.yml`](.github/workflows/build.yml)。在 Release 页面发布草稿后即可供下载。
 
 ## 快捷键
 

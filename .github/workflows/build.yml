@@ -23,9 +23,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build frontend
-        run: npm run build
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -36,7 +33,26 @@ jobs:
 
       - name: Build macOS app (Apple Silicon)
         uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --target aarch64-apple-darwin
+
+      - name: Upload to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")"
+          fi
+          BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          DMG="$(ls "$BUNDLE"/dmg/*.dmg | head -1)"
+          ZIP="${DMG%.dmg}.app.zip"
+          ditto -c -k --keepParent "$BUNDLE/macos/ClipboardX.app" "$ZIP"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG" "$ZIP" --clobber
+            gh release edit "$TAG" --draft
+          else
+            gh release create "$TAG" --draft --title "ClipboardX $TAG" --generate-notes "$DMG" "$ZIP"
+          fi
