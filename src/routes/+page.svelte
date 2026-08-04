@@ -98,8 +98,13 @@
     const onBlur = () => void win.hide();
     window.addEventListener('blur', onBlur);
     void win.onFocusChanged(({ payload: focused }) => {
-      if (focused) void refresh();
-      else void win.hide();
+      if (focused) {
+        // 每次显示时重新加载设置与列表，保证外观修改立即生效
+        void api.getSettings().then((s) => (settings = s)).catch(() => {});
+        void refresh();
+      } else {
+        void win.hide();
+      }
     });
   });
 

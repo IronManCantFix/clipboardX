@@ -56,12 +56,17 @@
     stats = await api.getStorageStats();
   }
 
+  let saved = $state(false);
+
   async function save() {
     try {
       await api.updateSettings(settings);
       status = '已保存';
+      saved = true;
+      setTimeout(() => (saved = false), 1600);
     } catch (e) {
       status = '保存失败';
+      saved = false;
       console.error(e);
     }
   }
@@ -145,7 +150,7 @@
         </button>
       {/each}
     </nav>
-    <div class="foot-status">{status || '\u00a0'}</div>
+    <div class="foot-status" class:ok={saved}>{status || '\u00a0'}</div>
   </aside>
 
   <main class="panel">
@@ -460,6 +465,11 @@
     font-size: 10.5px;
     color: var(--muted);
     padding: 8px 8px 0;
+    transition: color 0.2s;
+  }
+  .foot-status.ok {
+    color: #34c759;
+    font-weight: 600;
   }
 
   /* 右侧面板 */
