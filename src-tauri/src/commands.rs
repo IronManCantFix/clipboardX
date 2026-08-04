@@ -97,6 +97,11 @@ pub fn paste_entry(
     }
     crate::shortcut::activate_front_app();
     std::thread::sleep(std::time::Duration::from_millis(150));
+    // 文件条目不模拟 Cmd+V：文件写入剪贴板后由用户在目标位置手动粘贴，
+    // 避免 macOS 反复弹出辅助功能授权提示（尤其 Finder 场景）。
+    if e.kind == crate::models::EntryType::File {
+        return Ok(());
+    }
     crate::paste::send_cmd_v()
 }
 
