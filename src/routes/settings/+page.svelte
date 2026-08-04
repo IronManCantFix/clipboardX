@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import { confirm } from '@tauri-apps/plugin-dialog';
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import { api, type Settings, type StorageStats } from '../../lib/api';
 
   let settings = $state<Settings>({
@@ -402,9 +403,10 @@
           <img class="about-logo" src="/icon.png" alt="ClipboardX" />
           <b>ClipboardX</b>
           <span class="ver">版本 {version || '…'}</span>
+          <span class="author">作者：Codex 和 DeepSeek v4 flash 0731</span>
           <p class="about-desc">一个专为 macOS 打造的现代化剪贴板管理器 —— 原生体验、完全离线、低内存。</p>
           <div class="about-links">
-            <a href="https://github.com/IronManCantFix/clipboardX" target="_blank" rel="noreferrer">GitHub</a>
+            <button class="gh-link" onclick={() => openUrl('https://github.com/IronManCantFix/clipboardX')}>GitHub ↗</button>
           </div>
         </div>
         <div class="card">
@@ -786,19 +788,30 @@
     font-size: 11.5px;
     margin-top: 2px;
   }
+  .author {
+    display: block;
+    color: var(--muted);
+    font-size: 11.5px;
+    margin-top: 6px;
+  }
   .about-desc {
     color: var(--muted);
     font-size: 12px;
     margin: 10px 0 12px;
     line-height: 1.5;
   }
-  .about-links a {
+  .about-links .gh-link {
+    border: none;
+    background: transparent;
     color: var(--accent);
     font-size: 12.5px;
-    text-decoration: none;
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 7px;
+    transition: background 0.15s;
   }
-  .about-links a:hover {
-    text-decoration: underline;
+  .about-links .gh-link:hover {
+    background: rgba(10, 132, 255, 0.12);
   }
   .history-card {
     margin-top: 14px;
