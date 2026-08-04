@@ -51,10 +51,20 @@
 
   onMount(async () => {
     settings = await api.getSettings();
-    void loadStats();
     void api.getAutostart().then((v) => (autostart = v)).catch(() => {});
     void getVersion().then((v) => (version = v)).catch(() => {});
   });
+
+  function switchTab(id: string) {
+    if (tab === 'storage' && id !== 'storage') {
+      entries = []; // 离开存储页时释放 DOM
+    }
+    if (id === 'storage') {
+      void loadStats();
+      void loadHistory();
+    }
+    tab = id;
+  }
 
   async function loadStats() {
     stats = await api.getStorageStats();
@@ -79,10 +89,6 @@
     settings[key] = value;
     void save();
   }
-
-  $effect(() => {
-    if (tab === 'storage') void loadHistory();
-  });
 
   async function loadHistory() {
     entries = await api.list();
@@ -190,7 +196,7 @@
     </div>
     <nav>
       {#each tabs as t (t.id)}
-        <button class:active={tab === t.id} onclick={() => (tab = t.id)} aria-label={t.label}>
+        <button class:active={tab === t.id} onclick={() => switchTab(t.id)} aria-label={t.label}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                stroke-linecap="round" stroke-linejoin="round">
             {@html icons[t.icon]}
