@@ -10,17 +10,17 @@ pub enum Detected {
     Files(Vec<String>),
 }
 
-/// 分类优先级：图片 > RTF > 文件 > URL > 文本
+/// 分类优先级：文件 > 图片 > RTF > URL > 文本（访达复制文件会附带 TIFF 预览，必须先判文件）
 pub fn classify(snap: &ClipboardSnapshot) -> Option<Detected> {
+    if !snap.files.is_empty() {
+        return Some(Detected::Files(snap.files.clone()));
+    }
     if snap.has_image {
         let hash = snap.tiff.as_deref().map(content_hash).unwrap_or(0);
         return Some(Detected::Image(hash));
     }
     if let Some(rtf) = &snap.rtf {
         return Some(Detected::Rtf(rtf.clone()));
-    }
-    if !snap.files.is_empty() {
-        return Some(Detected::Files(snap.files.clone()));
     }
     let text = snap.text.as_deref()?;
     if looks_like_url(text) {
@@ -289,6 +289,20 @@ mod tests {
             tiff: Some(vec![1, 2, 3]),
         };
         assert!(matches!(classify(&snap), Some(Detected::Image(_))));
+    }
+
+    #[test]
+    fn classify_files_over_image() {
+        // 访达复制文件时同时有 TIFF 预览和文件路径，应判定为 Files
+        let snap = ClipboardSnapshot {
+            change_count: 1,
+            text: None,
+            rtf: None,
+            files: vec!["/Users/test/file.png".into()],
+            has_image: true,
+            tiff: Some(vec![1, 2, 3]),
+        };
+        assert!(matches!(classify(&snap), Some(Detected::Files(_))));
     }
 
     #[test]

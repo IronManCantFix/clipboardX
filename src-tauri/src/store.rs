@@ -81,7 +81,7 @@ impl Store {
                 created_at INTEGER NOT NULL,
                 last_used_at INTEGER NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_entries_sort ON entries(pinned DESC, last_used_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_entries_sort ON entries(last_used_at DESC);
             CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type);",
         )?;
         // 旧库迁移：补充 content_hash 列（图片去重用）
@@ -145,7 +145,7 @@ impl Store {
     pub fn list(&self) -> rusqlite::Result<Vec<Entry>> {
         self.query_light(
             &format!(
-                "SELECT {LIGHT_COLUMNS} FROM entries ORDER BY pinned DESC, last_used_at DESC"
+                "SELECT {LIGHT_COLUMNS} FROM entries ORDER BY last_used_at DESC"
             ),
         )
     }
@@ -223,7 +223,7 @@ impl Store {
         let mut out = vec![];
         loop {
             let count: i64 =
-                self.conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
+                self.conn.query_row("SELECT COUNT(*) FROM entries WHERE pinned = 0", [], |r| r.get(0))?;
             if count <= limit {
                 break;
             }
@@ -293,24 +293,32 @@ mod tests {
     }
 
     #[test]
-    fn pinned_comes_first() {
+    fn pinned_not_special_ordered() {
         let s = tmp_store();
         let id_a = s.insert(&text_entry("aaa", 100)).unwrap();
         let _ = s.insert(&text_entry("bbb", 200)).unwrap();
         s.set_pinned(id_a, true).unwrap();
         let list = s.list().unwrap();
-        assert_eq!(list[0].id, id_a);
+        // 固定项不置顶，按 last_used_at DESC 排序：bbb(200) 在前，aaa(100) 在后
+        assert_eq!(list[0].content, "bbb");
+        assert_eq!(list[1].content, "aaa");
     }
 
     #[test]
     fn prune_removes_oldest_non_pinned() {
         let s = tmp_store();
-        let id_old = s.insert(&text_entry("old", 100)).unwrap();
-        let _ = s.insert(&text_entry("new", 200)).unwrap();
-        s.set_pinned(id_old, true).unwrap();
+        let id_pinned = s.insert(&text_entry("pinned", 100)).unwrap();
+        s.set_pinned(id_pinned, true).unwrap();
+        s.insert(&text_entry("old", 200)).unwrap();
+        s.insert(&text_entry("new", 300)).unwrap();
+        // limit=1：非固定项有 2 条，删除最旧的 "old"
         let removed = s.prune(1).unwrap();
-        assert!(removed.iter().any(|e| e.id != id_old));
-        assert_eq!(s.list().unwrap().len(), 1);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].content, "old");
+        // 固定项不受 prune 影响
+        let list = s.list().unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|e| e.id == id_pinned));
     }
 
     #[test]
@@ -457,12 +465,15 @@ mod extra_tests {
         s.insert(&image_entry(1, 200)).unwrap();
         s.insert(&url_entry("https://x.dev", 300)).unwrap();
 
+        // limit=1：非固定项有 2 条，删除最旧的 image(200)
         let removed = s.prune(1).unwrap();
-        assert!(removed.iter().any(|e| e.kind == EntryType::Image || e.kind == EntryType::Url));
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].kind, EntryType::Image);
 
+        // 固定项 + 剩余 1 条非固定项 = 2 条
         let list = s.list().unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].id, id_pinned);
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|e| e.id == id_pinned));
     }
 
     #[test]

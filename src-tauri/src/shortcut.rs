@@ -72,6 +72,7 @@ fn remember_front_app() {
     LAST_FRONT_APP_PID.store(pid, Ordering::SeqCst);
 }
 
+
 /// 把焦点还给唤起前的前台应用。
 pub fn activate_front_app() {
     let pid = LAST_FRONT_APP_PID.load(Ordering::SeqCst);

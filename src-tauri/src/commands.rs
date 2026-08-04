@@ -91,17 +91,11 @@ pub fn paste_entry(
         .map_err(|e| e.to_string())?
         .touch(id, now)
         .map_err(|e| e.to_string())?;
-    // 隐藏弹窗，把焦点还给唤起前的前台应用，再模拟 Cmd+V
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
     }
     crate::shortcut::activate_front_app();
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    // 文件条目不模拟 Cmd+V：文件写入剪贴板后由用户在目标位置手动粘贴
-    if e.kind == crate::models::EntryType::File {
-        return Ok(());
-    }
-    // 模拟 Cmd+V 自动粘贴；权限不足时静默失败（内容已写入剪贴板，用户可手动 Cmd+V）
+    std::thread::sleep(std::time::Duration::from_millis(120));
     crate::paste::send_cmd_v();
     Ok(())
 }
