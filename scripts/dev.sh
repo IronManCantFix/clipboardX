@@ -1,6 +1,8 @@
 #!/bin/bash
 # ClipboardX dev 启动脚本：退出时自动释放 1420 端口并清理应用进程
 # 用法：./scripts/dev.sh   （或 npm run dev:start）
+# dev 版本使用 tauri.dev.conf.json 覆盖 identifier/productName，
+# 与 release 版本的辅助功能授权完全分开。
 set -e
 
 cleanup() {
@@ -10,4 +12,4 @@ cleanup() {
 }
 
 trap cleanup EXIT INT TERM
-npm run tauri dev
+npx tauri dev --config src-tauri/tauri.dev.conf.json
