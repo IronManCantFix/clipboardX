@@ -5,14 +5,16 @@ pub enum Detected {
     Text(String),
     Url(String),
     Rtf(Vec<u8>),
-    Image,
+    /// 携带内容哈希，避免不同图片被去重误判
+    Image(u64),
     Files(Vec<String>),
 }
 
 /// 分类优先级：图片 > RTF > 文件 > URL > 文本
 pub fn classify(snap: &ClipboardSnapshot) -> Option<Detected> {
     if snap.has_image {
-        return Some(Detected::Image);
+        let hash = snap.tiff.as_deref().map(content_hash).unwrap_or(0);
+        return Some(Detected::Image(hash));
     }
     if let Some(rtf) = &snap.rtf {
         return Some(Detected::Rtf(rtf.clone()));
@@ -38,6 +40,13 @@ pub fn looks_like_url(s: &str) -> bool {
 
 pub fn same_content(a: &Detected, b: &Detected) -> bool {
     a == b
+}
+
+fn content_hash(data: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    data.hash(&mut h);
+    h.finish()
 }
 
 
@@ -74,7 +83,7 @@ pub fn spawn_listener(app: AppHandle, state: std::sync::Arc<AppState>) {
                 Detected::Url(s) => (EntryType::Url, s.clone(), None, vec![], None),
                 Detected::Rtf(r) => (EntryType::Rtf, "[富文本]".into(), Some(r.clone()), vec![], None),
                 Detected::Files(f) => (EntryType::File, f.join(", "), None, f.clone(), None),
-                Detected::Image => {
+                Detected::Image(_hash) => {
                     let data_dir = state.data_dir.clone();
                     let path = snap.tiff.as_deref().and_then(|tiff| save_image(tiff, &data_dir).ok());
                     let path = match path {
@@ -150,7 +159,7 @@ mod tests {
             has_image: true,
             tiff: Some(vec![1, 2, 3]),
         };
-        assert!(matches!(classify(&snap), Some(Detected::Image)));
+        assert!(matches!(classify(&snap), Some(Detected::Image(_))));
     }
 
     #[test]
@@ -203,5 +212,13 @@ mod tests {
         let b = Detected::Text("abc".into());
         assert!(same_content(&a, &b));
         assert!(!same_content(&a, &Detected::Text("abd".into())));
+    }
+
+    #[test]
+    fn dedupe_distinguishes_different_images() {
+        let a = Detected::Image(111);
+        let b = Detected::Image(222);
+        assert!(!same_content(&a, &b));
+        assert!(same_content(&a, &Detected::Image(111)));
     }
 }

@@ -29,7 +29,9 @@
     await refresh();
     onNewEntry(refresh);
     searchInput?.focus();
-    // 失焦自动隐藏
+    // 失焦自动隐藏（DOM blur + 窗口焦点事件双保险）
+    const onBlur = () => void win.hide();
+    window.addEventListener('blur', onBlur);
     void win.onFocusChanged(({ payload: focused }) => {
       if (!focused) void win.hide();
     });
