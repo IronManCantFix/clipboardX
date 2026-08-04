@@ -8,11 +8,54 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, S
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+    static kAXTrustedCheckOptionPrompt: *const std::ffi::c_void;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    static kCFBooleanTrue: *const std::ffi::c_void;
+    fn CFDictionaryCreate(
+        allocator: *const std::ffi::c_void,
+        keys: *const *const std::ffi::c_void,
+        values: *const *const std::ffi::c_void,
+        num_values: isize,
+        key_callbacks: *const std::ffi::c_void,
+        value_callbacks: *const std::ffi::c_void,
+    ) -> *mut std::ffi::c_void;
+    fn CFRelease(cf: *const std::ffi::c_void);
 }
 
 /// 当前进程是否已获得 macOS 辅助功能权限。
 pub fn ax_is_trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
+}
+
+/// 检查辅助功能权限，未授权时弹出系统授权对话框。
+/// release 构建的二进制与 dev 不同，需要单独授权。
+pub fn ax_check_and_prompt() -> bool {
+    if ax_is_trusted() {
+        return true;
+    }
+    unsafe {
+        let key = kAXTrustedCheckOptionPrompt;
+        let value = kCFBooleanTrue;
+        let keys = [key];
+        let values = [value];
+        let dict = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+        let trusted = AXIsProcessTrustedWithOptions(dict);
+        if !dict.is_null() {
+            CFRelease(dict);
+        }
+        trusted
+    }
 }
 
 /// 唤起弹窗时记录的前台应用 pid，粘贴时用于把焦点还给它。

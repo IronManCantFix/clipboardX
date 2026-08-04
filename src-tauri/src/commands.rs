@@ -96,6 +96,10 @@ pub fn paste_entry(
     }
     crate::shortcut::activate_front_app();
     std::thread::sleep(std::time::Duration::from_millis(120));
+    // 辅助功能权限检测：release 二进制与 dev 不同，需单独授权
+    if !crate::shortcut::ax_check_and_prompt() {
+        return Ok(()); // 系统弹窗已出现，用户授权后重启生效；内容已写入剪贴板可手动粘贴
+    }
     crate::paste::send_cmd_v();
     Ok(())
 }

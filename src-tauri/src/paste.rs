@@ -54,7 +54,7 @@ extern "C" {
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
-    fn CFRelease(cf: *mut CGEvent);
+    fn CFRelease(cf: *const std::ffi::c_void);
 }
 
 // CGEvent flags — 与 enigo 完全一致的值
@@ -84,7 +84,7 @@ pub fn send_cmd_v() {
         if !cmd_down.is_null() {
             CGEventSetFlags(cmd_down, cmd_flags);
             CGEventPost(HID_EVENT_TAP, cmd_down);
-            CFRelease(cmd_down);
+            CFRelease(cmd_down as *const std::ffi::c_void);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
         // V↓（带 Command flag）
@@ -92,7 +92,7 @@ pub fn send_cmd_v() {
         if !v_down.is_null() {
             CGEventSetFlags(v_down, cmd_flags);
             CGEventPost(HID_EVENT_TAP, v_down);
-            CFRelease(v_down);
+            CFRelease(v_down as *const std::ffi::c_void);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
         // V↑（带 Command flag）
@@ -100,7 +100,7 @@ pub fn send_cmd_v() {
         if !v_up.is_null() {
             CGEventSetFlags(v_up, cmd_flags);
             CGEventPost(HID_EVENT_TAP, v_up);
-            CFRelease(v_up);
+            CFRelease(v_up as *const std::ffi::c_void);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
         // Command↑
@@ -108,10 +108,10 @@ pub fn send_cmd_v() {
         if !cmd_up.is_null() {
             CGEventSetFlags(cmd_up, base_flags);
             CGEventPost(HID_EVENT_TAP, cmd_up);
-            CFRelease(cmd_up);
+            CFRelease(cmd_up as *const std::ffi::c_void);
         }
         if !source.is_null() {
-            CFRelease(source);
+            CFRelease(source as *const std::ffi::c_void);
         }
     }
 }
