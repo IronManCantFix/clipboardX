@@ -46,6 +46,7 @@ use crate::commands::AppState;
 use crate::models::EntryType;
 use crate::store::NewEntry;
 use chrono::Utc;
+use std::path::Path;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -63,29 +64,32 @@ pub fn spawn_listener(app: AppHandle, state: std::sync::Arc<AppState>) {
             let Some(detected) = classify(&snap) else {
                 continue;
             };
-            // M1：图片跳过（M2 支持）
-            if detected == Detected::Image {
-                last_detected = None;
-                continue;
-            }
             if last_detected.as_ref().is_some_and(|p| same_content(p, &detected)) {
                 continue;
             }
             last_detected = Some(detected.clone());
             let now = Utc::now().timestamp();
-            let (kind, content, rtf, files) = match &detected {
-                Detected::Text(s) => (EntryType::Text, s.clone(), None, vec![]),
-                Detected::Url(s) => (EntryType::Url, s.clone(), None, vec![]),
-                Detected::Rtf(r) => (EntryType::Rtf, "[富文本]".into(), Some(r.clone()), vec![]),
-                Detected::Files(f) => (EntryType::File, f.join(", "), None, f.clone()),
-                Detected::Image => unreachable!(),
+            let (kind, content, rtf, files, image_path) = match &detected {
+                Detected::Text(s) => (EntryType::Text, s.clone(), None, vec![], None),
+                Detected::Url(s) => (EntryType::Url, s.clone(), None, vec![], None),
+                Detected::Rtf(r) => (EntryType::Rtf, "[富文本]".into(), Some(r.clone()), vec![], None),
+                Detected::Files(f) => (EntryType::File, f.join(", "), None, f.clone(), None),
+                Detected::Image => {
+                    let data_dir = state.data_dir.clone();
+                    let path = snap.tiff.as_deref().and_then(|tiff| save_image(tiff, &data_dir).ok());
+                    let path = match path {
+                        Some(p) => p,
+                        None => continue, // 图片保存失败则跳过
+                    };
+                    (EntryType::Image, "[图片]".into(), None, vec![], Some(path))
+                }
             };
             let source_app = frontmost_app_name();
             let new_entry = NewEntry {
                 kind,
                 content,
                 rtf_data: rtf,
-                image_path: None,
+                image_path,
                 thumb_path: None,
                 file_paths: files,
                 source_app,
@@ -101,6 +105,18 @@ pub fn spawn_listener(app: AppHandle, state: std::sync::Arc<AppState>) {
             let _ = app.emit("clipboard:new-entry", ());
         }
     });
+}
+
+/// 将 TIFF 数据转为 PNG 存入 images 目录，返回文件路径。
+fn save_image(tiff: &[u8], data_dir: &Path) -> Result<String, String> {
+    let img = image::load_from_memory_with_format(tiff, image::ImageFormat::Tiff)
+        .map_err(|e| format!("tiff decode failed: {e}"))?;
+    let images_dir = data_dir.join("images");
+    std::fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
+    let path = images_dir.join(format!("{}.png", Utc::now().timestamp_millis()));
+    img.save_with_format(&path, image::ImageFormat::Png)
+        .map_err(|e| format!("png save failed: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// 前台应用名（objc2 NSWorkspace；失败返回 None）
@@ -132,6 +148,7 @@ mod tests {
             rtf: None,
             files: vec![],
             has_image: true,
+            tiff: Some(vec![1, 2, 3]),
         };
         assert!(matches!(classify(&snap), Some(Detected::Image)));
     }
@@ -144,6 +161,7 @@ mod tests {
             rtf: Some(vec![1, 2, 3]),
             files: vec![],
             has_image: false,
+            tiff: None,
         };
         assert!(matches!(classify(&snap), Some(Detected::Rtf(_))));
     }
@@ -156,6 +174,7 @@ mod tests {
             rtf: None,
             files: vec!["/a/b.txt".into()],
             has_image: false,
+            tiff: None,
         };
         assert!(matches!(classify(&files), Some(Detected::Files(_))));
         let url = ClipboardSnapshot {
@@ -164,6 +183,7 @@ mod tests {
             rtf: None,
             files: vec![],
             has_image: false,
+            tiff: None,
         };
         assert!(matches!(classify(&url), Some(Detected::Url(_))));
         let txt = ClipboardSnapshot {
@@ -172,6 +192,7 @@ mod tests {
             rtf: None,
             files: vec![],
             has_image: false,
+            tiff: None,
         };
         assert!(matches!(classify(&txt), Some(Detected::Text(_))));
     }

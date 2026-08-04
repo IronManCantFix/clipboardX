@@ -2,10 +2,12 @@ use crate::models::Settings;
 use crate::settings::SettingsStore;
 use crate::store::Store;
 use std::sync::Mutex;
+use tauri::Manager;
 
 pub struct AppState {
     pub store: Mutex<Store>,
     pub settings: Mutex<SettingsStore>,
+    pub data_dir: std::path::PathBuf,
 }
 
 #[tauri::command]
@@ -62,7 +64,7 @@ pub fn paste_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<(), Str
         .list()
         .map_err(|e| e.to_string())?;
     let e = list.into_iter().find(|x| x.id == id).ok_or("entry not found")?;
-    crate::paste::write_back(&e);
+    crate::paste::write_back(&e).map_err(|e| e)?;
     let now = chrono::Utc::now().timestamp();
     state
         .store
@@ -71,6 +73,15 @@ pub fn paste_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<(), Str
         .touch(id, now)
         .map_err(|e| e.to_string())?;
     crate::paste::send_cmd_v()
+}
+
+#[tauri::command]
+pub fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("settings") {
+        win.show().map_err(|e| e.to_string())?;
+        win.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

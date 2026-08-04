@@ -29,6 +29,7 @@ export const api = {
   delete: (id: number) => invoke('delete_entry', { id }),
   paste: (id: number) => invoke('paste_entry', { id }),
   getSettings: () => invoke<Settings>('get_settings'),
+  showSettings: () => invoke('show_settings'),
   updateSettings: (settings: Settings) => invoke('update_settings', { settings }),
 };
 

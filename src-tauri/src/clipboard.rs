@@ -1,10 +1,10 @@
 use objc2::rc::{autoreleasepool, Retained};
 #[allow(deprecated)]
 use objc2_app_kit::{
-    NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeRTF, NSPasteboardTypeString,
-    NSPasteboardTypeTIFF,
+    NSFilenamesPboardType, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeRTF,
+    NSPasteboardTypeString, NSPasteboardTypeTIFF,
 };
-use objc2_foundation::{NSArray, NSString};
+use objc2_foundation::{NSArray, NSData, NSString};
 
 /// 一次剪贴板快照。M1 覆盖：文本 / RTF / 文件 / 图片标记。
 pub struct ClipboardSnapshot {
@@ -13,6 +13,7 @@ pub struct ClipboardSnapshot {
     pub rtf: Option<Vec<u8>>,
     pub files: Vec<String>,
     pub has_image: bool,
+    pub tiff: Option<Vec<u8>>,
 }
 
 #[allow(deprecated)]
@@ -50,13 +51,15 @@ pub fn read_clipboard() -> ClipboardSnapshot {
                 arr.iter().map(|s| s.to_string()).collect()
             })
             .unwrap_or_default();
-        let has_image = pb.dataForType(type_tiff).is_some();
+        let tiff = pb.dataForType(type_tiff).map(|d| d.to_vec());
+        let has_image = tiff.is_some();
         ClipboardSnapshot {
             change_count,
             text,
             rtf,
             files,
             has_image,
+            tiff,
         }
     })
 }
@@ -69,6 +72,18 @@ pub fn write_text(s: &str) {
         let ns = NSString::from_str(s);
         let _ = pb.setString_forType(&ns, type_string);
     });
+}
+
+pub fn write_image_png(path: &str) -> Result<(), String> {
+    let data = std::fs::read(path).map_err(|e| e.to_string())?;
+    autoreleasepool(|_| {
+        let type_png = unsafe { NSPasteboardTypePNG };
+        let pb = NSPasteboard::generalPasteboard();
+        pb.clearContents();
+        let ns = NSData::from_vec(data);
+        let _ = pb.setData_forType(Some(&ns), type_png);
+    });
+    Ok(())
 }
 
 pub fn write_files(paths: &[String]) {

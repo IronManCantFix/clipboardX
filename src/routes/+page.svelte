@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+  import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
   import { api, onNewEntry, type Entry } from '../lib/api';
   import { filterEntries } from '../lib/search';
   import TabBar from '../components/TabBar.svelte';
@@ -26,9 +25,14 @@
   }
 
   onMount(async () => {
+    const win = getCurrentWindow();
     await refresh();
     onNewEntry(refresh);
     searchInput?.focus();
+    // 失焦自动隐藏
+    void win.onFocusChanged(({ payload: focused }) => {
+      if (!focused) void win.hide();
+    });
   });
 
   function onKeydown(e: KeyboardEvent) {
@@ -59,8 +63,24 @@
   }
 
   function openSettings() {
-    void WebviewWindow.getByLabel('settings').then((w) => w?.show());
+    void api.showSettings();
   }
+
+  // 动态高度：条目 < 15 按实际数量，>= 15 按 15 行高度，多余滚动
+  const ROW_H = 32;
+  const FIXED_H = 110;
+  const EMPTY_H = 100;
+  const MAX_ROWS = 15;
+  const WIN_W = 360;
+  function applyHeight() {
+    const n = Math.max(1, Math.min(visibleEntries.length, MAX_ROWS));
+    const empty = visibleEntries.length === 0 ? EMPTY_H : 0;
+    void getCurrentWindow().setSize(new LogicalSize(WIN_W, FIXED_H + n * ROW_H + empty));
+  }
+  $effect(() => {
+    visibleEntries;
+    applyHeight();
+  });
 
   async function paste(entry: Entry) {
     try {

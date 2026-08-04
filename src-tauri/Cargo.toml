@@ -26,6 +26,7 @@ enigo = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = "0.4"
 anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSEvent", "NSWorkspace"] }
 objc2-foundation = { version = "0.3" }

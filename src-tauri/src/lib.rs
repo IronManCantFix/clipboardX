@@ -25,6 +25,7 @@ pub fn run() {
             let state = std::sync::Arc::new(commands::AppState {
                 store: std::sync::Mutex::new(store),
                 settings: std::sync::Mutex::new(settings),
+                data_dir: data_dir.clone(),
             });
             app.manage(state.clone());
 
@@ -35,12 +36,19 @@ pub fn run() {
             } else {
                 tauri::WebviewUrl::App("settings.html".into())
             };
-            let _ = tauri::WebviewWindowBuilder::new(app, "settings", settings_url)
-            .title("ClipboardX 设置")
-            .inner_size(430.0, 560.0)
-            .resizable(false)
-            .visible(false)
-            .build()?;
+            let settings_win = tauri::WebviewWindowBuilder::new(app, "settings", settings_url)
+                .title("ClipboardX 设置")
+                .inner_size(430.0, 560.0)
+                .resizable(false)
+                .visible(false)
+                .build()?;
+            let settings_win_ref = settings_win.clone();
+            settings_win.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = settings_win_ref.hide();
+                }
+            });
 
             // 托盘：左键/菜单弹出设置窗口
             {
@@ -89,6 +97,7 @@ pub fn run() {
             commands::paste_entry,
             commands::get_settings,
             commands::update_settings,
+            commands::show_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
