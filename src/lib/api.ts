@@ -30,6 +30,13 @@ export interface Settings {
   image_preview_height: number;
 }
 
+export interface UpdateInfo {
+  current_version: string;
+  latest_version: string | null;
+  has_update: boolean;
+  message: string;
+}
+
 export interface StorageStats {
   db_size: number;
   images_dir: string;
@@ -49,6 +56,9 @@ export const api = {
   positionPopover: () => invoke('position_popover'),
   getStorageStats: () => invoke<StorageStats>('get_storage_stats'),
   clearImages: () => invoke('clear_images'),
+  getAutostart: () => invoke<boolean>('get_autostart'),
+  setAutostart: (enabled: boolean) => invoke('set_autostart', { enabled }),
+  checkForUpdates: () => invoke<UpdateInfo>('check_for_updates'),
   updateSettings: (settings: Settings) => invoke('update_settings', { settings }),
 };
 

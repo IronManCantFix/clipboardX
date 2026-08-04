@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { getVersion } from '@tauri-apps/api/app';
   import { api, type Settings, type StorageStats } from '../../lib/api';
 
   let settings = $state<Settings>({
@@ -15,13 +16,34 @@
     image_preview_height: 60,
   });
   let stats = $state<StorageStats | null>(null);
+  let autostart = $state(false);
+  let version = $state('');
+  let updateMsg = $state('');
+  let checking = $state(false);
   let recording = $state(false);
   let status = $state('');
 
   onMount(async () => {
     settings = await api.getSettings();
     void loadStats();
+    void api.getAutostart().then((v) => (autostart = v)).catch(() => {});
+    void getVersion().then((v) => (version = v)).catch(() => {});
   });
+
+  async function checkUpdate() {
+    checking = true;
+    updateMsg = '';
+    try {
+      const info = await api.checkForUpdates();
+      updateMsg = info.has_update
+        ? `发现新版本 ${info.latest_version}（当前 ${info.current_version}）`
+        : `已是最新版本（${info.current_version}）`;
+    } catch (e) {
+      updateMsg = String(e).replace(/^Error:\s*/, '');
+    } finally {
+      checking = false;
+    }
+  }
 
   async function loadStats() {
     stats = await api.getStorageStats();
@@ -205,6 +227,40 @@
         {recording ? '按下组合键…' : settings.shortcut}
       </button>
     </div>
+  </section>
+
+  <section>
+    <h3><span class="ic">🚀</span>启动</h3>
+    <div class="field row">
+      <div>
+        <span class="lbl">开机自动启动</span>
+        <p class="hint">登录系统后自动在后台运行</p>
+      </div>
+      <button class="toggle" class:on={autostart} aria-label="开机自动启动"
+              onclick={() => {
+                autostart = !autostart;
+                void api.setAutostart(autostart).catch(() => {
+                  autostart = !autostart;
+                  status = '设置失败';
+                });
+              }}></button>
+    </div>
+  </section>
+
+  <section>
+    <h3><span class="ic">🔄</span>更新</h3>
+    <div class="field row">
+      <div>
+        <span class="lbl">当前版本</span>
+        <p class="hint">{version ? 'ClipboardX ' + version : '读取中…'}</p>
+      </div>
+      <button class="keybtn" onclick={checkUpdate} disabled={checking}>
+        {checking ? '检查中…' : '检查更新'}
+      </button>
+    </div>
+    {#if updateMsg}
+      <p class="hint update-msg">{updateMsg}</p>
+    {/if}
   </section>
 
   <section>

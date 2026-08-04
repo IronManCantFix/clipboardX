@@ -161,6 +161,60 @@ pub fn clear_images(state: tauri::State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autostart = app.autolaunch();
+    if enabled {
+        autostart.enable().map_err(|e| e.to_string())
+    } else {
+        autostart.disable().map_err(|e| e.to_string())
+    }
+}
+
+#[derive(Serialize)]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub has_update: bool,
+    pub message: String,
+}
+
+#[tauri::command]
+pub fn check_for_updates(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    let current = app.package_info().version.to_string();
+    // TODO: 项目发布后替换为真实仓库地址
+    let url = "https://api.github.com/repos/huanghongda/ClipboardX/releases/latest";
+    match ureq::get(url).set("User-Agent", "ClipboardX").call() {
+        Ok(resp) => {
+            let body = resp.into_string().map_err(|e| e.to_string())?;
+            let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+            let latest = json["tag_name"]
+                .as_str()
+                .map(|s| s.trim_start_matches('v').to_string());
+            let has_update = latest.as_deref().map(|l| l != current).unwrap_or(false);
+            Ok(UpdateInfo {
+                current_version: current,
+                latest_version: latest,
+                has_update,
+                message: if has_update {
+                    "发现新版本".into()
+                } else {
+                    "已是最新版本".into()
+                },
+            })
+        }
+        Err(ureq::Error::Status(404, _)) => Err("未配置更新源（项目尚未发布）".into()),
+        Err(e) => Err(format!("检查更新失败：{e}")),
+    }
+}
+
+#[tauri::command]
 pub fn get_settings(state: tauri::State<'_, AppState>) -> Result<Settings, String> {
     Ok(state
         .settings

@@ -15,6 +15,10 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             shortcut::set_accessory_policy();
             // 主窗口原生失焦隐藏（macOS 上最可靠的隐藏触发）
@@ -110,6 +114,9 @@ pub fn run() {
             commands::show_settings,
             commands::get_storage_stats,
             commands::clear_images,
+            commands::get_autostart,
+            commands::set_autostart,
+            commands::check_for_updates,
             shortcut::position_popover,
         ])
         .build(tauri::generate_context!())
