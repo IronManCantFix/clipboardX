@@ -19,7 +19,6 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             shortcut::set_accessory_policy();
             // 主窗口原生失焦隐藏（macOS 上最可靠的隐藏触发）
@@ -95,6 +94,7 @@ pub fn run() {
             commands::clear_history,
             commands::get_autostart,
             commands::set_autostart,
+            commands::check_for_updates,
             shortcut::position_popover,
         ])
         .build(tauri::generate_context!())

@@ -153,9 +153,7 @@
         updateMsg = `已是最新版本（${info.current_version}）`;
         return;
       }
-      updateMsg = `发现新版本 ${info.latest_version}（当前 ${info.current_version}），正在下载并安装…`;
-      await api.downloadAndInstallUpdate();
-      updateMsg = `新版本 ${info.latest_version} 已安装完成`;
+      updateMsg = `发现新版本 ${info.latest_version}（当前 ${info.current_version}），请前往 GitHub Releases 手动下载`;
     } catch (e) {
       updateMsg = String(e).replace(/^Error:\s*/, '');
     } finally {

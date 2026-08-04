@@ -12,7 +12,6 @@
     "core:window:allow-hide",
     "core:window:allow-show",
     "core:window:allow-center",
-    "dialog:default",
-    "updater:default"
+    "dialog:default"
   ]
 }

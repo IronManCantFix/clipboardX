@@ -247,3 +247,108 @@ pub fn update_settings(
     }
     Ok(())
 }
+
+#[derive(Serialize)]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub has_update: bool,
+    pub message: String,
+}
+
+fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    let parts: Vec<&str> = v.split('.').take(3).collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let num = |s: &str| {
+        s.chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u64>()
+            .ok()
+    };
+    Some((num(parts[0])?, num(parts[1])?, num(parts[2])?))
+}
+
+fn version_gt(a: &str, b: &str) -> bool {
+    match (parse_version(a), parse_version(b)) {
+        (Some(x), Some(y)) => x > y,
+        _ => a != b,
+    }
+}
+
+/// 检查 GitHub 最新 release 版本（无需签名密钥；点击设置里的「检查更新」时触发）。
+#[tauri::command]
+pub fn check_for_updates() -> Result<UpdateInfo, String> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let out = std::process::Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            "10",
+            "-H",
+            "User-Agent: ClipboardX",
+            "https://api.github.com/repos/IronManCantFix/clipboardX/releases/latest",
+        ])
+        .output()
+        .map_err(|e| format!("无法连接 GitHub：{e}"))?;
+    if !out.status.success() {
+        // 尚未发布或网络异常时给出友好提示，不当作错误弹出
+        return Ok(UpdateInfo {
+            current_version: current,
+            latest_version: None,
+            has_update: false,
+            message: "尚未发布版本或网络不可用".into(),
+        });
+    }
+    let body = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("解析 GitHub 响应失败：{e}"))?;
+    let latest = json
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim_start_matches('v').to_string());
+    let Some(latest) = latest else {
+        return Ok(UpdateInfo {
+            current_version: current,
+            latest_version: None,
+            has_update: false,
+            message: "暂未获取到版本信息".into(),
+        });
+    };
+    let has_update = version_gt(&latest, &current);
+    Ok(UpdateInfo {
+        current_version: current,
+        latest_version: Some(latest.clone()),
+        has_update,
+        message: if has_update {
+            format!("发现新版本 {latest}")
+        } else {
+            "已是最新版本".into()
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_comparison() {
+        assert!(version_gt("0.1.1", "0.1.0"));
+        assert!(version_gt("0.10.0", "0.9.9"));
+        assert!(version_gt("1.0.0", "0.99.99"));
+        assert!(!version_gt("0.1.0", "0.1.0"));
+        assert!(!version_gt("0.1.0", "0.1.1"));
+        assert!(!version_gt("0.9.9", "0.10.0"));
+    }
+
+    #[test]
+    fn version_parsing() {
+        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_version("1.2"), None);
+        assert_eq!(parse_version("1.2.3-beta"), Some((1, 2, 3)));
+        assert_eq!(parse_version(""), None);
+    }
+}
