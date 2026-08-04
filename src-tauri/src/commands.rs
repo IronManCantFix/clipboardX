@@ -278,6 +278,7 @@ pub struct UpdateInfo {
     pub latest_version: Option<String>,
     pub has_update: bool,
     pub message: String,
+    pub url: Option<String>,
 }
 
 fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
@@ -324,6 +325,7 @@ pub fn check_for_updates() -> Result<UpdateInfo, String> {
             latest_version: None,
             has_update: false,
             message: "尚未发布版本或网络不可用".into(),
+            url: None,
         });
     }
     let body = String::from_utf8_lossy(&out.stdout);
@@ -339,6 +341,7 @@ pub fn check_for_updates() -> Result<UpdateInfo, String> {
             latest_version: None,
             has_update: false,
             message: "暂未获取到版本信息".into(),
+            url: None,
         });
     };
     let has_update = version_gt(&latest, &current);
@@ -350,6 +353,11 @@ pub fn check_for_updates() -> Result<UpdateInfo, String> {
             format!("发现新版本 {latest}")
         } else {
             "已是最新版本".into()
+        },
+        url: if has_update {
+            Some(format!("https://github.com/IronManCantFix/clipboardX/releases/tag/{}", latest))
+        } else {
+            None
         },
     })
 }

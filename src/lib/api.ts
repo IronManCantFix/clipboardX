@@ -36,6 +36,7 @@ export interface UpdateInfo {
   latest_version: string | null;
   has_update: boolean;
   message: string;
+  url: string | null;
 }
 
 export interface StorageStats {

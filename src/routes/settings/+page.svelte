@@ -148,17 +148,23 @@
   async function checkUpdate() {
     checking = true;
     updateMsg = '';
+    let updateUrl: string | null = null;
     try {
       const info = await api.checkForUpdates();
       if (!info.has_update) {
         updateMsg = `已是最新版本（${info.current_version}）`;
         return;
       }
-      updateMsg = `发现新版本 ${info.latest_version}（当前 ${info.current_version}），请前往 GitHub Releases 手动下载`;
+      updateUrl = info.url ?? null;
+      updateMsg = `发现新版本 ${info.latest_version}（当前 ${info.current_version}）`;
     } catch (e) {
       updateMsg = String(e).replace(/^Error:\s*/, '');
     } finally {
       checking = false;
+      // 检测到新版本时自动打开 Release 页面
+      if (updateUrl) {
+        void openUrl(updateUrl);
+      }
     }
   }
 
