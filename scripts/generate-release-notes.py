@@ -62,14 +62,13 @@ def main() -> None:
     except FileNotFoundError:
         pass
 
-    # 定位上一个 tag；回退时使用最近 30 条提交
+    # 定位上一个 tag（排除当前 tag，兼容 workflow_dispatch 重复构建同一版本号）；
+    # 找不到时回退到最近 30 条提交
     prev = None
     try:
-        prev = sh("git", "describe", "--tags", "--abbrev=0", "HEAD~1")[0].strip()
+        prev = sh("git", "describe", "--tags", "--abbrev=0", "--exclude", tag, "HEAD~1")[0].strip()
     except subprocess.CalledProcessError:
         pass
-    if prev == tag:
-        prev = None
 
     if prev:
         raw = subprocess.run(
@@ -93,6 +92,8 @@ def main() -> None:
     grouped: dict[str, list[str]] = {k: [] for k in CATEGORIES}
     other: list[str] = []
     for message in raw.split("\x1f"):
+        # %B 输出以换行结尾，与分隔符粘连后会残留前导换行
+        message = message.strip("\n")
         if not message.strip():
             continue
         subject, bullets = parse_commit(message)

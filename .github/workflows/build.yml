@@ -15,6 +15,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 完整历史与 tags：release notes 需要按 tag 范围生成
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
