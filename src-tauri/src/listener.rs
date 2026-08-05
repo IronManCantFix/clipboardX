@@ -65,6 +65,7 @@ fn now_ts() -> i64 {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -87,10 +88,8 @@ pub fn cleanup_orphan_images(data_dir: &std::path::Path, store: &crate::store::S
     for entry in rd.flatten() {
         let path = entry.path();
         let Some(ps) = path.to_str() else { continue };
-        if !referenced.contains(ps) {
-            if std::fs::remove_file(&path).is_ok() {
-                removed += 1;
-            }
+        if !referenced.contains(ps) && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
         }
     }
     if removed > 0 {
@@ -187,7 +186,7 @@ pub fn spawn_listener(app: AppHandle) {
                         if let Ok(removed) = store.prune(limit) {
                             drop(store);
                             for e in &removed {
-                                crate::commands::remove_image_file(&state.data_dir, e);
+                                crate::commands::remove_image_file(e);
                             }
                         }
                     }

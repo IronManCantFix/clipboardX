@@ -1,4 +1,4 @@
-use crate::models::{EntryType, Settings};
+use crate::models::Settings;
 use serde::Serialize;
 use crate::settings::SettingsStore;
 use crate::store::Store;
@@ -19,8 +19,7 @@ fn now_ts() -> i64 {
 }
 
 /// 删除图片条目时同步清理磁盘上的原图与缩略图。
-pub fn remove_image_file(data_dir: &std::path::Path, e: &crate::models::Entry) {
-    let _ = data_dir; // 保留参数签名，后续可直接从条目路径删除
+pub fn remove_image_file(e: &crate::models::Entry) {
     for p in [&e.image_path, &e.thumb_path].into_iter().flatten() {
         let _ = std::fs::remove_file(p);
     }
@@ -65,7 +64,7 @@ pub fn delete_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<(), St
             .map_err(|e| e.to_string())?
             .delete(id)
             .map_err(|e| e.to_string())?;
-        remove_image_file(&state.data_dir, &e);
+        remove_image_file(&e);
     }
     Ok(())
 }
@@ -83,7 +82,7 @@ pub fn paste_entry(
         .get(id)
         .map_err(|e| e.to_string())?
         .ok_or("entry not found")?;
-    crate::paste::write_back(&e).map_err(|e| e)?;
+    crate::paste::write_back(&e)?;
     let now = now_ts();
     state
         .store
@@ -101,17 +100,6 @@ pub fn paste_entry(
     let _ = crate::shortcut::ax_check_and_prompt();
     crate::paste::send_cmd_v();
     Ok(())
-}
-
-/// 查询当前辅助功能权限状态（前端用于展示引导）。
-#[tauri::command]
-pub fn get_accessibility_status() -> bool {
-    crate::shortcut::ax_is_trusted()
-}
-
-#[tauri::command]
-pub fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
-    ensure_settings_window(&app)
 }
 
 /// 懒创建设置窗口：平时不占内存，关闭隐藏而非销毁，下次打开瞬间生效。
@@ -203,19 +191,20 @@ pub fn get_storage_stats(state: tauri::State<'_, AppState>) -> Result<StorageSta
 
 #[tauri::command]
 pub fn clear_images(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let images_dir = state.data_dir.join("images");
-    if images_dir.exists() {
-        for entry in std::fs::read_dir(&images_dir).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            let _ = std::fs::remove_file(path);
-        }
+    // 仅删除非固定图片条目，固定图片保留（与「固定项永不被清理」的承诺一致）
+    let victims = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store
+            .delete_images_non_pinned()
+            .map_err(|e| e.to_string())?
+    };
+    for e in &victims {
+        remove_image_file(e);
     }
-    state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .delete_by_type(EntryType::Image)
-        .map_err(|e| e.to_string())?;
+    // 清理磁盘上未被任何条目引用的孤儿图片文件（固定条目引用的文件保留）
+    let data_dir = state.data_dir.clone();
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    crate::listener::cleanup_orphan_images(&data_dir, &store);
     Ok(())
 }
 
@@ -285,25 +274,13 @@ pub struct UpdateInfo {
     pub url: Option<String>,
 }
 
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let parts: Vec<&str> = v.split('.').take(3).collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    let num = |s: &str| {
-        s.chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<String>()
-            .parse::<u64>()
-            .ok()
-    };
-    Some((num(parts[0])?, num(parts[1])?, num(parts[2])?))
-}
-
-fn version_gt(a: &str, b: &str) -> bool {
-    match (parse_version(a), parse_version(b)) {
-        (Some(x), Some(y)) => x > y,
-        _ => a != b,
+fn has_update(latest: &str, current: &str) -> bool {
+    match (
+        semver::Version::parse(latest),
+        semver::Version::parse(current),
+    ) {
+        (Ok(l), Ok(c)) => l > c,
+        _ => latest != current,
     }
 }
 
@@ -311,30 +288,29 @@ fn version_gt(a: &str, b: &str) -> bool {
 #[tauri::command]
 pub fn check_for_updates() -> Result<UpdateInfo, String> {
     let current = env!("CARGO_PKG_VERSION").to_string();
-    let out = std::process::Command::new("curl")
-        .args([
-            "-fsSL",
-            "--max-time",
-            "10",
-            "-H",
-            "User-Agent: ClipboardX",
-            "https://api.github.com/repos/IronManCantFix/clipboardX/releases/latest",
-        ])
-        .output()
-        .map_err(|e| format!("无法连接 GitHub：{e}"))?;
-    if !out.status.success() {
-        // 尚未发布或网络异常时给出友好提示，不当作错误弹出
-        return Ok(UpdateInfo {
-            current_version: current,
-            latest_version: None,
-            has_update: false,
-            message: "尚未发布版本或网络不可用".into(),
-            url: None,
-        });
-    }
-    let body = String::from_utf8_lossy(&out.stdout);
-    let json: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("解析 GitHub 响应失败：{e}"))?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(10))
+        .build();
+    let response = agent
+        .get("https://api.github.com/repos/IronManCantFix/clipboardX/releases/latest")
+        .set("User-Agent", "ClipboardX")
+        .call();
+    let json: serde_json::Value = match response {
+        Ok(resp) => resp
+            .into_json()
+            .map_err(|e| format!("解析 GitHub 响应失败：{e}"))?,
+        Err(_) => {
+            // 尚未发布或网络异常时给出友好提示，不当作错误弹出
+            return Ok(UpdateInfo {
+                current_version: current,
+                latest_version: None,
+                has_update: false,
+                message: "尚未发布版本或网络不可用".into(),
+                url: None,
+            });
+        }
+    };
     let latest = json
         .get("tag_name")
         .and_then(|v| v.as_str())
@@ -348,7 +324,7 @@ pub fn check_for_updates() -> Result<UpdateInfo, String> {
             url: None,
         });
     };
-    let has_update = version_gt(&latest, &current);
+    let has_update = has_update(&latest, &current);
     Ok(UpdateInfo {
         current_version: current,
         latest_version: Some(latest.clone()),
@@ -371,20 +347,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_comparison() {
-        assert!(version_gt("0.1.1", "0.1.0"));
-        assert!(version_gt("0.10.0", "0.9.9"));
-        assert!(version_gt("1.0.0", "0.99.99"));
-        assert!(!version_gt("0.1.0", "0.1.0"));
-        assert!(!version_gt("0.1.0", "0.1.1"));
-        assert!(!version_gt("0.9.9", "0.10.0"));
-    }
-
-    #[test]
-    fn version_parsing() {
-        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse_version("1.2"), None);
-        assert_eq!(parse_version("1.2.3-beta"), Some((1, 2, 3)));
-        assert_eq!(parse_version(""), None);
+    fn update_version_comparison() {
+        assert!(has_update("0.1.1", "0.1.0"));
+        assert!(has_update("0.10.0", "0.9.9"));
+        assert!(has_update("1.0.0", "0.99.99"));
+        assert!(!has_update("0.1.0", "0.1.0"));
+        assert!(!has_update("0.1.0", "0.1.1"));
+        assert!(!has_update("0.9.9", "0.10.0"));
+        // pre-release 版本低于正式版
+        assert!(!has_update("0.1.2-alpha", "0.1.2"));
+        // 非法版本回退为字符串比较
+        assert!(has_update("unknown", "0.1.18"));
     }
 }

@@ -42,7 +42,7 @@ ClipboardX 是一款专为 macOS 打造的轻量剪贴板管理器，定位类�
 
 ### 模块职责
 
-- **listener**：轮询 `NSPasteboard.changeCount`（间隔 500ms）；检测变化后读取内容并分类（图片 > RTF > 文件/URL > 文本）；排除应用过滤；与最近一条内容去重
+- **listener**：轮询 `NSPasteboard.changeCount`（间隔 750ms）；检测变化后读取内容并分类（文件 > 图片 > RTF > URL > 文本）；与最近一条内容去重
 - **store**：SQLite 读写（rusqlite，WAL 模式）；图片缩略图磁盘缓存；数量/时间自动清理
 - **commands**：Tauri 命令桥，暴露 `list/search/pin/delete/paste/export/settings` 等
 - **前端**：持有全量列表快照（≤100 条），本地实时过滤（<1ms），`clipboard:new-entry` 事件驱动刷新
@@ -51,10 +51,9 @@ ClipboardX 是一款专为 macOS 打造的轻量剪贴板管理器，定位类�
 
 1. 检测到剪贴板变化（changeCount 变化）
 2. 读取内容 → 类型分类
-3. 排除应用检查：前台应用在黑名单则跳过
-4. 与最近一条内容去重，相同则跳过
-5. 写入 SQLite；图片同时生成 512px 缩略图
-6. 推送 `clipboard:new-entry` 事件 → 前端刷新列表（最近使用置顶）
+3. 与最近一条内容去重，相同则跳过
+4. 写入 SQLite；图片同时生成 360px 缩略图
+5. 推送 `clipboard:new-entry` 事件 → 前端刷新列表（最近使用置顶）
 
 ### 粘贴实现
 
@@ -66,7 +65,7 @@ ClipboardX 是一款专为 macOS 打造的轻量剪贴板管理器，定位类�
 
 ## 4. 数据模型
 
-存储目录：`~/Library/Application Support/ClipboardX/`（`entries.db` + `images/` + `thumbs/`）
+存储目录：`~/Library/Application Support/ClipboardX/`（`entries.db` + `images/`，原图与缩略图同目录）
 
 ```sql
 CREATE TABLE entries (
@@ -75,7 +74,7 @@ CREATE TABLE entries (
   content      TEXT,            -- 纯文本预览；url 存地址；file 存路径
   rtf_data     BLOB,            -- RTF 原始数据（粘贴时还原格式）
   image_path   TEXT,            -- 原图路径（按需解码，不常驻内存）
-  thumb_path   TEXT,            -- 512px 缩略图路径（列表展示）
+  thumb_path   TEXT,            -- 360px 缩略图路径（列表展示）
   file_paths   TEXT,            -- 文件引用 JSON 数组
   source_app   TEXT,            -- 来源应用名（展示用）
   pinned       INTEGER DEFAULT 0,
@@ -93,7 +92,7 @@ CREATE INDEX idx_entries_type ON entries(type);
 ## 5. 核心功能设计
 
 ### 5.1 剪贴板监听
-- 轮询 `changeCount`，500ms 间隔，变化才读内容
+- 轮询 `changeCount`，750ms 间隔，变化才读内容
 - 类型支持：Text / RichText(RTF) / Image / File / Folder / URL
 - 分类优先级：Image > RTF > File/URL > Text（同一复制同时含多种类型时取优先级最高）
 - GIF 按静态图处理
@@ -114,7 +113,7 @@ CREATE INDEX idx_entries_type ON entries(type);
 - 唤起弹窗于**鼠标位置**，靠近屏幕边缘自动翻转避让
 
 ### 5.5 图片
-- 复制时生成 512px JPEG 缩略图（列表展示）
+- 复制时生成 360px PNG 缩略图（列表展示）
 - 原图按原始格式存磁盘，仅粘贴/预览时解码
 - 列表缩略图通过懒加载（IntersectionObserver）避免一次解码过多
 
@@ -128,12 +127,7 @@ CREATE INDEX idx_entries_type ON entries(type);
 - **时间模式**：删除创建时间超过 N 天的非固定条目（7 天 / 30 天 / 永久）
 - 固定条目不受任何自动清理影响
 
-### 5.8 排除应用
-- 黑名单（bundle id 列表）：1Password、KeePassXC、Bitwarden 等可配置
-- 监听时读取前台应用 bundle id，命中黑名单则跳过记录
-- 设置中支持"添加当前前台应用"一键加入
-
-### 5.9 右键菜单
+### 5.8 右键菜单
 - **复制**：把该项写回剪贴板（不粘贴）
 - **固定 / 取消固定**
 - **导出**：文本 → .txt；RTF → .rtf；图片 → 原格式；文件 → 复制到所选目录
@@ -153,7 +147,7 @@ CREATE INDEX idx_entries_type ON entries(type);
 
 ### 6.2 设置弹窗
 - 菜单栏图标点击弹出（含"退出 ClipboardX"入口）
-- 分组：**常规**（历史条数滑块 5–100 默认 15；自动清理模式：数量/时间/永久）、**快捷键**（录制式）、**排除应用**（黑名单列表 + 添加当前前台应用）、**存储**（路径、占用量、"清空历史"保留固定项且二次确认）
+- 分组：**常规**（历史条数滑块 1–100 默认 15）、**快捷键**（录制式）、**存储**（路径、占用量、"清空历史"保留固定项且二次确认）
 
 ## 7. 性能与内存控制
 
@@ -174,7 +168,7 @@ ClipboardX/
 ├── src-tauri/
 │   ├── src/
 │   │   ├── main.rs           # Tauri 入口、托盘
-│   │   ├── listener.rs       # 剪贴板轮询、分类、排除、去重
+│   │   ├── listener.rs       # 剪贴板轮询、分类、去重
 │   │   ├── store.rs          # SQLite、缩略图缓存、清理
 │   │   ├── paste.rs          # 写回剪贴板 + Cmd+V 模拟
 │   │   └── commands.rs       # IPC 命令
@@ -186,7 +180,7 @@ ClipboardX/
 ## 9. 里程碑
 
 - **M1 MVP**：脚手架（Tauri 2 + Svelte 5 + Rust 分层）；监听（文本/URL/文件）；SQLite；弹窗列表 + 搜索 + 键盘导航；粘贴（Cmd+V）；全局快捷键；设置（条数/快捷键）
-- **M2 核心增强**：图片（缩略图/粘贴/预览）、RTF、固定 Tab、右键菜单、排除应用、自动清理
+- **M2 核心增强**：图片（缩略图/粘贴/预览）、RTF、固定 Tab、右键菜单、自动清理
 - **M3 打磨发布**：导出完善、拼音搜索、空状态/动画打磨、开机自启、DMG 打包、内存实测优化
 
 ## 10. 后续待定项（不阻塞开发）

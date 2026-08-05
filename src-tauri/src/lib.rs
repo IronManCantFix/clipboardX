@@ -46,7 +46,7 @@ pub fn run() {
             };
             app.manage(state);
 
-            // 设置窗口不在此创建：首次打开时懒加载，关闭即销毁，减少常驻内存
+            // 设置窗口懒加载：首次打开时创建，关闭时隐藏而非销毁，避免冷启动 WebView
 
             // 托盘：左键/菜单弹出设置窗口
             {
@@ -107,10 +107,8 @@ pub fn run() {
             commands::set_pinned,
             commands::delete_entry,
             commands::paste_entry,
-            commands::get_accessibility_status,
             commands::get_settings,
             commands::update_settings,
-            commands::show_settings,
             commands::get_storage_stats,
             commands::clear_images,
             commands::clear_history,

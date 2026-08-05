@@ -135,7 +135,12 @@
   });
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'ArrowDown') {
+    // 搜索框内按退格属于编辑搜索词，不应触发「删除条目」
+    const inSearch = (e.target as HTMLElement | null)?.tagName === 'INPUT';
+    if (inSearch && e.key === 'Backspace') return;
+    if (e.key === 'Escape') {
+      getCurrentWindow().hide();
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       selected = Math.min(selected + 1, visibleEntries.length - 1);
     } else if (e.key === 'ArrowUp') {
@@ -144,8 +149,6 @@
     } else if (e.key === 'Enter' && visibleEntries[selected]) {
       e.preventDefault();
       paste(visibleEntries[selected]);
-    } else if (e.key === 'Escape') {
-      getCurrentWindow().hide();
     } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
       e.preventDefault();
       const cur = visibleEntries[selected];

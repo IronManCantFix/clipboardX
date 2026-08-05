@@ -41,6 +41,16 @@ describe('highlight', () => {
     expect(highlight('Hello World', 'world')).toBe('Hello <mark>World</mark>');
   });
 
+  it('highlights fuzzy matches character by character', () => {
+    expect(highlight('git push origin main', 'gpo')).toBe(
+      '<mark>g</mark>it <mark>p</mark>ush <mark>o</mark>rigin main',
+    );
+  });
+
+  it('escapes quotes in attribute-safe output', () => {
+    expect(highlight("it's <b>", 'b')).toBe("it&#39;s &lt;<mark>b</mark>&gt;");
+  });
+
   it('no match returns original escaped', () => {
     expect(highlight('<b>', 'x')).toBe('&lt;b&gt;');
   });

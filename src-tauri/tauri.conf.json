@@ -26,13 +26,15 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "img-src": "'self' asset: http://asset.localhost data: blob:",
+        "style-src": "'self' 'unsafe-inline'"
+      },
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$APPDATA/images/**",
-          "$APPDATA/**"
-        ]
+        "scope": ["$APPDATA/images/**"]
       }
     },
     "macOSPrivateApi": true

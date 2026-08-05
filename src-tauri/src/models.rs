@@ -10,6 +10,20 @@ pub enum EntryType {
     Url,
 }
 
+impl EntryType {
+    /// 从数据库存储的 type 字符串解析。
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "text" => Self::Text,
+            "rtf" => Self::Rtf,
+            "image" => Self::Image,
+            "file" => Self::File,
+            "url" => Self::Url,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
     pub id: i64,

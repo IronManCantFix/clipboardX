@@ -98,6 +98,7 @@
   }
 
   let saved = $state(false);
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   async function save() {
     try {
@@ -114,7 +115,9 @@
 
   function set<K extends keyof Settings>(key: K, value: Settings[K]) {
     settings[key] = value;
-    void save();
+    // 滑块拖动时高频触发，防抖到停止操作后统一保存
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => void save(), 300);
   }
 
   async function clearHistory() {
@@ -152,7 +155,7 @@
   }
 
   async function clearImages() {
-    const ok = await confirm('确定清除全部图片缓存吗？图片历史条目也会被删除。', {
+    const ok = await confirm('确定清除图片缓存吗？非固定图片条目会被删除，固定图片会保留。', {
       title: 'ClipboardX',
       kind: 'warning',
     });

@@ -1,5 +1,4 @@
 use crate::models::Settings;
-use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
 

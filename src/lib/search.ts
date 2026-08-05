@@ -36,20 +36,58 @@ export function escapeHtml(s: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** 模糊模式：在原始文本上按字符顺序定位每个命中字符，返回其下标集合。 */
+function fuzzyMatchPositions(text: string, query: string): Set<number> | null {
+  const t = text.toLowerCase();
+  const q = query.trim().toLowerCase();
+  if (!q) return null;
+  let from = 0;
+  const positions = new Set<number>();
+  for (const ch of q) {
+    const i = t.indexOf(ch, from);
+    if (i < 0) return null;
+    positions.add(i);
+    from = i + 1;
+  }
+  return positions;
 }
 
 export function highlight(text: string, query: string): string {
   const q = query.trim().toLowerCase();
-  const escaped = escapeHtml(text);
-  if (!q) return escaped;
-  const idx = escaped.toLowerCase().indexOf(q);
-  if (idx < 0) return escaped;
-  return (
-    escaped.slice(0, idx) +
-    '<mark>' +
-    escaped.slice(idx, idx + q.length) +
-    '</mark>' +
-    escaped.slice(idx + q.length)
-  );
+  if (!q) return escapeHtml(text);
+  const t = text.toLowerCase();
+  // 连续子串：直接高亮整段
+  const idx = t.indexOf(q);
+  if (idx >= 0) {
+    return (
+      escapeHtml(text.slice(0, idx)) +
+      '<mark>' +
+      escapeHtml(text.slice(idx, idx + q.length)) +
+      '</mark>' +
+      escapeHtml(text.slice(idx + q.length))
+    );
+  }
+  // 模糊匹配：逐字符标记命中位置
+  const positions = fuzzyMatchPositions(text, q);
+  if (!positions) return escapeHtml(text);
+  let out = '';
+  let inMark = false;
+  for (let i = 0; i < text.length; i++) {
+    const hit = positions.has(i);
+    if (hit && !inMark) {
+      out += '<mark>';
+      inMark = true;
+    }
+    if (!hit && inMark) {
+      out += '</mark>';
+      inMark = false;
+    }
+    out += escapeHtml(text[i]);
+  }
+  if (inMark) out += '</mark>';
+  return out;
 }

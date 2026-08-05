@@ -25,7 +25,7 @@ fn entry_from_row(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
     let file_paths: String = row.get("file_paths")?;
     Ok(Entry {
         id: row.get("id")?,
-        kind: serde_json::from_str(&format!("\"{kind}\"")).unwrap(),
+        kind: EntryType::from_db_str(&kind).unwrap_or(EntryType::Text),
         content: row.get("content")?,
         content_hash: row.get("content_hash")?,
         rtf_data: row.get("rtf_data")?,
@@ -45,7 +45,7 @@ fn entry_from_row_light(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
     let file_paths: String = row.get("file_paths")?;
     Ok(Entry {
         id: row.get("id")?,
-        kind: serde_json::from_str(&format!("\"{kind}\"")).unwrap(),
+        kind: EntryType::from_db_str(&kind).unwrap_or(EntryType::Text),
         content: row.get("content")?,
         content_hash: row.get("content_hash")?,
         rtf_data: None,
@@ -207,10 +207,14 @@ impl Store {
         Ok(victims)
     }
 
-    pub fn delete_by_type(&self, kind: EntryType) -> rusqlite::Result<usize> {
-        let kind_str = serde_json::to_string(&kind).unwrap().trim_matches('"').to_string();
+    /// 删除全部非固定图片条目，固定图片保留，返回被删条目（用于清理图片文件）。
+    pub fn delete_images_non_pinned(&self) -> rusqlite::Result<Vec<Entry>> {
+        let victims = self.query_light(&format!(
+            "SELECT {LIGHT_COLUMNS} FROM entries WHERE type = 'image' AND pinned = 0"
+        ))?;
         self.conn
-            .execute("DELETE FROM entries WHERE type = ?1", params![kind_str])
+            .execute("DELETE FROM entries WHERE type = 'image' AND pinned = 0", [])?;
+        Ok(victims)
     }
 
     pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
@@ -220,25 +224,20 @@ impl Store {
 
     /// 删除最旧的非固定条目，直到剩余条数 <= limit。返回被删条目（用于清理图片文件）。
     pub fn prune(&self, limit: i64) -> rusqlite::Result<Vec<Entry>> {
-        let mut out = vec![];
-        loop {
-            let count: i64 =
-                self.conn.query_row("SELECT COUNT(*) FROM entries WHERE pinned = 0", [], |r| r.get(0))?;
-            if count <= limit {
-                break;
-            }
-            let victim: i64 = self.conn.query_row(
-                "SELECT id FROM entries WHERE pinned = 0 ORDER BY last_used_at ASC LIMIT 1",
-                [],
-                |r| r.get(0),
-            )?;
-            if let Some(e) = self.get(victim)? {
-                out.push(e);
-            }
-            self.conn
-                .execute("DELETE FROM entries WHERE id = ?1", params![victim])?;
-        }
-        Ok(out)
+        // 一次删除超出 limit 的最旧非固定条目（count <= limit 时删除 0 行）
+        let sql = format!(
+            "DELETE FROM entries
+             WHERE id IN (
+                 SELECT id FROM entries
+                 WHERE pinned = 0
+                 ORDER BY last_used_at ASC
+                 LIMIT (SELECT MAX(0, COUNT(*) - ?1) FROM entries WHERE pinned = 0)
+             )
+             RETURNING {LIGHT_COLUMNS}"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![limit], entry_from_row_light)?;
+        rows.collect()
     }
 
     fn query_light(&self, sql: &str) -> rusqlite::Result<Vec<Entry>> {

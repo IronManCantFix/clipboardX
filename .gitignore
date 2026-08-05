@@ -1,12 +1,9 @@
 .DS_Store
-.superpowers/
 node_modules/
-src-tauri/target/
 dist/
-.DS_Store
-node_modules
 /build
 /.svelte-kit
+/.svelte-kit.old
 /package
 .env
 .env.*
@@ -17,5 +14,5 @@ vite.config.ts.timestamp-*
 .superpowers/
 src-tauri/target/
 
-# 发布产物（由 scripts/release.sh 生成并上传到 GitHub Release）
+# 发布产物（由发布流程生成并上传到 GitHub Release）
 /latest.json
