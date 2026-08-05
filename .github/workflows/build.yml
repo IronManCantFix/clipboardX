@@ -52,9 +52,11 @@ jobs:
           DMG="$(ls "$BUNDLE"/dmg/*.dmg | head -1)"
           ZIP="${DMG%.dmg}.app.zip"
           ditto -c -k --keepParent "$BUNDLE/macos/ClipboardX.app" "$ZIP"
+          # 生成结构化 release notes（基于 git 提交日志；存在 RELEASE_NOTES.md 时优先使用）
+          python3 scripts/generate-release-notes.py "$TAG" > release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DMG" "$ZIP" --clobber
-            gh release edit "$TAG" --draft
+            gh release edit "$TAG" --draft --notes-file release-notes.md
           else
-            gh release create "$TAG" --draft --title "ClipboardX $TAG" --generate-notes "$DMG" "$ZIP"
+            gh release create "$TAG" --draft --title "ClipboardX $TAG" --notes-file release-notes.md "$DMG" "$ZIP"
           fi

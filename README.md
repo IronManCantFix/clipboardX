@@ -54,6 +54,8 @@ npm run tauri build
 
 GitHub Actions 会在推送 `v*` 标签时自动构建 macOS（Apple 芯片）应用，并把构建产物（`.dmg` / `.app.zip`）上传到 GitHub Releases 的**草稿**中，见 [`.github/workflows/build.yml`](.github/workflows/build.yml)。在 Release 页面发布草稿后即可供下载。
 
+Release 草稿的更新日志由 [`scripts/generate-release-notes.py`](scripts/generate-release-notes.py) 根据提交日志自动生成（按 `fix:` / `feat:` / `perf:` 等类型分组）。如需人工覆盖，可在仓库根目录放置 `RELEASE_NOTES.md`，其内容将完全替代自动生成的日志。
+
 ## macOS 安装（未签名应用）
 
 本仓库构建的应用**没有 Apple Developer ID 签名**（签名需要付费的 Apple 开发者账号），也未经过公证（notarization），因此首次打开会被 Gatekeeper 拦截。按以下任一方式处理：
