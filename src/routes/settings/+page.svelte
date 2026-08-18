@@ -272,6 +272,14 @@
                    oninput={(e) => set('history_limit', Number((e.target as HTMLInputElement).value))} />
             <p class="hint">超过上限自动删除最旧的未固定条目（固定项永不被清理）</p>
           </div>
+          <div class="divider"></div>
+          <div class="field">
+            <span class="lbl">更新后需重新授权辅助功能</span>
+            <div class="notice">
+              由于应用没有 Apple 开发者证书签名，每次更新后 macOS 会将新版视为「新应用」，辅助功能授权会失效。<br />
+              请到 <b>系统设置 → 隐私与安全性 → 辅助功能</b>，<b>移除旧的 ClipboardX 条目</b>，再重新添加并打开开关，之后才能正常粘贴。
+            </div>
+          </div>
         </div>
       </section>
 
@@ -992,5 +1000,16 @@
     padding: 8px 12px;
     background: var(--bg);
     border-radius: 7px;
+  }
+
+  .notice {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: rgba(255, 159, 10, 0.14);
+    border: 1px solid rgba(255, 159, 10, 0.3);
+    border-radius: 8px;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--text);
   }
 </style>
