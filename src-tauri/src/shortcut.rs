@@ -65,6 +65,42 @@ pub fn ax_check_and_prompt() -> bool {
     }
 }
 
+/// 未签名应用每次更新后，TCC 的辅助功能授权（绑定旧二进制）会失效。
+/// 检测到「上次运行的版本 ≠ 当前版本」时，调用系统工具 tccutil 清除本应用的
+/// 辅助功能授权记录：旧条目自动移除，首次粘贴时 macOS 会重新弹出授权框，
+/// 用户点「允许」即可，无需手动进「隐私与安全性」删除旧条目。
+/// 全新安装（无版本标记文件）不清理；执行失败不影响启动（退化到手动授权流程）。
+pub fn reset_accessibility_if_version_changed(app: &AppHandle) {
+    let current = env!("CARGO_PKG_VERSION");
+    let Ok(data_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let marker = data_dir.join(".last_version");
+    let changed = std::fs::read_to_string(&marker)
+        .map(|prev| prev.trim() != current)
+        .unwrap_or(false);
+    // 先记录当前版本：即使清理失败也不在每次启动时重复尝试
+    let _ = std::fs::write(&marker, current);
+    if !changed {
+        return;
+    }
+    println!("[clipboardx] version changed to {current}, resetting Accessibility TCC entry");
+    let identifier = app.config().identifier.as_str();
+    match std::process::Command::new("/usr/bin/tccutil")
+        .args(["reset", "Accessibility", identifier])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            println!("[clipboardx] tccutil reset ok");
+        }
+        Ok(out) => println!(
+            "[clipboardx] tccutil reset failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => println!("[clipboardx] tccutil error: {e}"),
+    }
+}
+
 /// 唤起弹窗时记录的前台应用 pid，粘贴时用于把焦点还给它。
 static LAST_FRONT_APP_PID: AtomicI32 = AtomicI32::new(0);
 
