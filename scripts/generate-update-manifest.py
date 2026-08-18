@@ -23,7 +23,9 @@ manifest = {
     "notes": "",
     "pub_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "platforms": {
-        "aarch64-apple-darwin": {
+        # tauri-plugin-updater 识别的平台键（v1 兼容格式；写成 Rust target triple
+        # 如 "aarch64-apple-darwin" 会报 "None of the fallback platforms ... found"）
+        "darwin-aarch64": {
             "signature": signature,
             "url": url,
         }
