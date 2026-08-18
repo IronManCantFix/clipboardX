@@ -1,6 +1,6 @@
 [package]
 name = "clipboardx"
-version = "0.1.18"
+version = "0.1.19"
 description = "A Tauri App"
 authors = ["ClipboardX Contributors"]
 edition = "2021"
@@ -23,10 +23,9 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 anyhow = "1"
-semver = "1"
-ureq = { version = "2", features = ["json"] }
 image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSEvent", "NSWorkspace"] }

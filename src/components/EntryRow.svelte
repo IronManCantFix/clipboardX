@@ -62,6 +62,8 @@
       class="thumb"
       src={convertFileSrc(entry.thumb_path ?? entry.image_path ?? '')}
       alt=""
+      loading="lazy"
+      decoding="async"
       style="height:{thumbHeight}px"
     />
   {:else}

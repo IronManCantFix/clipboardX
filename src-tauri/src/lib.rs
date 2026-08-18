@@ -19,6 +19,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             shortcut::set_accessory_policy();
             // 主窗口原生失焦隐藏（macOS 上最可靠的隐藏触发）
@@ -46,7 +47,7 @@ pub fn run() {
             };
             app.manage(state);
 
-            // 设置窗口懒加载：首次打开时创建，关闭时隐藏而非销毁，避免冷启动 WebView
+            // 设置窗口懒加载：首次打开时创建，关闭即销毁（不常驻 WebView 进程）
 
             // 托盘：左键/菜单弹出设置窗口
             {
@@ -114,7 +115,8 @@ pub fn run() {
             commands::clear_history,
             commands::get_autostart,
             commands::set_autostart,
-            commands::check_for_updates,
+            commands::check_update,
+            commands::install_update,
             shortcut::position_popover,
         ])
         .build(tauri::generate_context!())

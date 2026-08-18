@@ -3,6 +3,7 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { confirm } from '@tauri-apps/plugin-dialog';
   import { openUrl } from '@tauri-apps/plugin-opener';
+  import { listen } from '@tauri-apps/api/event';
   import { api, type Settings, type StorageStats } from '../../lib/api';
 
   let settings = $state<Settings>({
@@ -49,10 +50,27 @@
     info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   };
 
-  onMount(async () => {
-    settings = await api.getSettings();
-    void api.getAutostart().then((v) => (autostart = v)).catch(() => {});
-    void getVersion().then((v) => (version = v)).catch(() => {});
+  let unlistenProgress: (() => void) | undefined;
+  onMount(() => {
+    void (async () => {
+      settings = await api.getSettings();
+      void api.getAutostart().then((v) => (autostart = v)).catch(() => {});
+      void getVersion().then((v) => (version = v)).catch(() => {});
+      // 更新下载进度：install_update 通过 update:progress 事件回报
+      unlistenProgress = await listen<{ downloaded: number; total: number | null }>(
+        'update:progress',
+        (e) => {
+          const { downloaded, total } = e.payload;
+          updateMsg =
+            total != null
+              ? `正在下载并安装更新… ${Math.min(100, Math.round((downloaded / total) * 100))}%`
+              : `正在下载并安装更新…（${(downloaded / 1024 / 1024).toFixed(1)} MB）`;
+        },
+      );
+    })();
+    return () => {
+      unlistenProgress?.();
+    };
   });
 
   let storageLoaded = $state(false);
@@ -166,25 +184,27 @@
   }
 
   async function checkUpdate() {
+    if (checking) return;
     checking = true;
     updateMsg = '';
-    let updateUrl: string | null = null;
     try {
-      const info = await api.checkForUpdates();
+      const info = await api.checkUpdate();
       if (!info.has_update) {
         updateMsg = `已是最新版本（${info.current_version}）`;
         return;
       }
-      updateUrl = info.url ?? null;
-      updateMsg = `发现新版本 ${info.latest_version}（当前 ${info.current_version}）`;
+      const ok = await confirm(
+        `发现新版本 ${info.latest_version}（当前 ${info.current_version}）。\n是否立即下载并安装？安装完成后应用会自动重启。`,
+        { title: 'ClipboardX', kind: 'info' },
+      );
+      if (!ok) return;
+      updateMsg = '正在下载并安装更新…';
+      await api.installUpdate();
+      // 安装成功后应用会自动重启，此处不会继续执行
     } catch (e) {
       updateMsg = String(e).replace(/^Error:\s*/, '');
     } finally {
       checking = false;
-      // 检测到新版本时自动打开 Release 页面
-      if (updateUrl) {
-        void openUrl(updateUrl);
-      }
     }
   }
 
@@ -468,7 +488,7 @@
           <div class="field row">
             <div>
               <span class="lbl">检查更新</span>
-              <p class="hint">从 GitHub Releases 获取最新版本</p>
+              <p class="hint">自动下载并安装最新版本，安装完成后自动重启</p>
             </div>
             <button class="keybtn" onclick={checkUpdate} disabled={checking}>
               {checking ? '检查中…' : '检查更新'}

@@ -35,8 +35,6 @@ export interface UpdateInfo {
   current_version: string;
   latest_version: string | null;
   has_update: boolean;
-  message: string;
-  url: string | null;
 }
 
 export interface StorageStats {
@@ -59,7 +57,8 @@ export const api = {
   clearHistory: () => invoke<number>('clear_history'),
   getAutostart: () => invoke<boolean>('get_autostart'),
   setAutostart: (enabled: boolean) => invoke('set_autostart', { enabled }),
-  checkForUpdates: () => invoke<UpdateInfo>('check_for_updates'),
+  checkUpdate: () => invoke<UpdateInfo>('check_update'),
+  installUpdate: () => invoke<string>('install_update'),
   updateSettings: (settings: Settings) => invoke('update_settings', { settings }),
 };
 

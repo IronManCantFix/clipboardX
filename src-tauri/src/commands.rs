@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::settings::SettingsStore;
 use crate::store::Store;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub struct AppState {
     pub store: Mutex<Store>,
@@ -102,7 +102,7 @@ pub fn paste_entry(
     Ok(())
 }
 
-/// 懒创建设置窗口：平时不占内存，关闭隐藏而非销毁，下次打开瞬间生效。
+/// 懒创建设置窗口：平时不占内存（WebView 进程不常驻），关闭即销毁，下次打开时重建
 pub fn ensure_settings_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("settings") {
         let w = win;
@@ -125,14 +125,8 @@ pub fn ensure_settings_window(app: &tauri::AppHandle) -> Result<(), String> {
         .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
-    // 关闭时隐藏而非销毁，避免下次冷启动 WebView
-    let hide_win = win.clone();
-    win.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            let _ = hide_win.hide();
-        }
-    });
+    // 关闭即销毁：设置窗口低频使用，冷启动代价可接受，换来平时不常驻约 29MB 内存
+    // （销毁后下次打开由 ensure_settings_window 重建）
     // WebView 冷启动需要一个 runloop cycle，推到下一帧再显示
     let w = win;
     let _ = app.run_on_main_thread(Box::new(move || {
@@ -270,93 +264,51 @@ pub struct UpdateInfo {
     pub current_version: String,
     pub latest_version: Option<String>,
     pub has_update: bool,
-    pub message: String,
-    pub url: Option<String>,
 }
 
-fn has_update(latest: &str, current: &str) -> bool {
-    match (
-        semver::Version::parse(latest),
-        semver::Version::parse(current),
-    ) {
-        (Ok(l), Ok(c)) => l > c,
-        _ => latest != current,
-    }
-}
-
-/// 检查 GitHub 最新 release 版本（无需签名密钥；点击设置里的「检查更新」时触发）。
+/// 检查是否有可用更新（tauri-plugin-updater，从 tauri.conf.json 的 endpoints 拉取清单，
+/// 用内置公钥校验签名）。不下载、不安装，由 install_update 完成实际更新。
 #[tauri::command]
-pub fn check_for_updates() -> Result<UpdateInfo, String> {
+pub async fn check_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    use tauri_plugin_updater::UpdaterExt;
     let current = env!("CARGO_PKG_VERSION").to_string();
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(10))
-        .timeout_read(std::time::Duration::from_secs(10))
-        .build();
-    let response = agent
-        .get("https://api.github.com/repos/IronManCantFix/clipboardX/releases/latest")
-        .set("User-Agent", "ClipboardX")
-        .call();
-    let json: serde_json::Value = match response {
-        Ok(resp) => resp
-            .into_json()
-            .map_err(|e| format!("解析 GitHub 响应失败：{e}"))?,
-        Err(_) => {
-            // 尚未发布或网络异常时给出友好提示，不当作错误弹出
-            return Ok(UpdateInfo {
-                current_version: current,
-                latest_version: None,
-                has_update: false,
-                message: "尚未发布版本或网络不可用".into(),
-                url: None,
-            });
-        }
-    };
-    let latest = json
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim_start_matches('v').to_string());
-    let Some(latest) = latest else {
-        return Ok(UpdateInfo {
+    let updater = app.updater_builder().build().map_err(|e| e.to_string())?;
+    match updater.check().await.map_err(|e| e.to_string())? {
+        Some(u) => Ok(UpdateInfo {
+            current_version: current,
+            latest_version: Some(u.version.clone()),
+            has_update: true,
+        }),
+        None => Ok(UpdateInfo {
             current_version: current,
             latest_version: None,
             has_update: false,
-            message: "暂未获取到版本信息".into(),
-            url: None,
-        });
-    };
-    let has_update = has_update(&latest, &current);
-    Ok(UpdateInfo {
-        current_version: current,
-        latest_version: Some(latest.clone()),
-        has_update,
-        message: if has_update {
-            format!("发现新版本 {latest}")
-        } else {
-            "已是最新版本".into()
-        },
-        url: if has_update {
-            Some(format!("https://github.com/IronManCantFix/clipboardX/releases/tag/{}", latest))
-        } else {
-            None
-        },
-    })
+        }),
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn update_version_comparison() {
-        assert!(has_update("0.1.1", "0.1.0"));
-        assert!(has_update("0.10.0", "0.9.9"));
-        assert!(has_update("1.0.0", "0.99.99"));
-        assert!(!has_update("0.1.0", "0.1.0"));
-        assert!(!has_update("0.1.0", "0.1.1"));
-        assert!(!has_update("0.9.9", "0.10.0"));
-        // pre-release 版本低于正式版
-        assert!(!has_update("0.1.2-alpha", "0.1.2"));
-        // 非法版本回退为字符串比较
-        assert!(has_update("unknown", "0.1.18"));
-    }
+/// 下载并安装新版本（校验签名后替换应用），安装成功后自动重启。
+/// 下载过程中通过 "update:progress" 事件向前端回报进度（{downloaded, total}）。
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater_builder().build().map_err(|e| e.to_string())?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Ok("已是最新版本".into());
+    };
+    let emitter = app.clone();
+    update
+        .download_and_install(
+            move |downloaded, total| {
+                let _ = emitter.emit(
+                    "update:progress",
+                    serde_json::json!({ "downloaded": downloaded, "total": total }),
+                );
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    // 安装完成，重启使新版本生效（restart 不返回，会直接退出当前进程）
+    app.restart()
 }

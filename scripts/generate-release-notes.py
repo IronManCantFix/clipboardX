@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""根据 git 提交日志生成结构化 release notes。
+"""根据 git 提交日志生成结构化 release notes（含日期、提交数与短哈希）。
 
 用法：generate-release-notes.py <tag>
 
 若仓库根目录存在 RELEASE_NOTES.md，则直接使用其内容（人工覆盖优先）；
 否则从上一个 tag 到 HEAD 的提交中按 conventional-commit 类型分组生成。
+输出 markdown 到 stdout。
 """
+
+from __future__ import annotations
 
 import subprocess
 import sys
 from collections import OrderedDict
+from datetime import datetime, timezone
+
+REPO = "IronManCantFix/clipboardX"
 
 CATEGORIES = OrderedDict(
     [
@@ -49,7 +55,10 @@ def categorize(line: str) -> tuple[str | None, str]:
 
 def main() -> None:
     tag = sys.argv[1] if len(sys.argv) > 1 else ""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     print(f"## ClipboardX {tag} 更新日志")
+    print()
+    print(f"> 发布时间：{today} ｜ 版本：`{tag}`")
     print()
 
     # 人工维护的 release notes 优先（存在时完全覆盖自动生成内容）
@@ -72,38 +81,42 @@ def main() -> None:
 
     if prev:
         raw = subprocess.run(
-            ["git", "log", "--pretty=format:%B%x1f", f"{prev}..HEAD"],
+            ["git", "log", "--pretty=format:%h%x1f%B%x1e", f"{prev}..HEAD"],
             capture_output=True,
             text=True,
             check=True,
         ).stdout
-        print(f"**变更范围**：{prev} → {tag or 'HEAD'}")
+        scope = f"{prev} → {tag or 'HEAD'}"
     else:
         raw = subprocess.run(
-            ["git", "log", "--pretty=format:%B%x1f", "-30"],
+            ["git", "log", "--pretty=format:%h%x1f%B%x1e", "-30"],
             capture_output=True,
             text=True,
             check=True,
         ).stdout
-        commits_count = len([m for m in raw.split("\x1f") if m.strip()])
-        print(f"**变更范围**：最近 {commits_count} 条提交")
+        scope = "最近 30 条提交"
+
+    commits = [c for c in raw.split("\x1e") if c.strip()]
+    print(f"**变更范围**：{scope}（共 {len(commits)} 条提交）")
     print()
 
     grouped: dict[str, list[str]] = {k: [] for k in CATEGORIES}
     other: list[str] = []
-    for message in raw.split("\x1f"):
-        # %B 输出以换行结尾，与分隔符粘连后会残留前导换行
-        message = message.strip("\n")
-        if not message.strip():
+    for commit in commits:
+        parts = commit.strip("\n").split("\x1f", 1)
+        sha = parts[0].strip()
+        message = parts[1].strip("\n") if len(parts) > 1 else ""
+        if not message:
             continue
         subject, bullets = parse_commit(message)
-        # 有明细时展示明细，否则展示 subject
+        # 有明细时展示明细，否则展示 subject；均附带短哈希便于追溯
         for item in bullets if bullets else [subject]:
             cat, text = categorize(item)
+            entry = f"{text}（`{sha}`）"
             if cat:
-                grouped[cat].append(text)
+                grouped[cat].append(entry)
             else:
-                other.append(text)
+                other.append(entry)
 
     printed = False
     for cat, items in grouped.items():
@@ -122,6 +135,12 @@ def main() -> None:
         print()
     if not printed:
         print("- 无显著变更")
+        print()
+
+    # 完整提交对比链接（仅有 prev 时才有意义）
+    if prev:
+        print(f"---")
+        print(f"[查看完整提交记录](https://github.com/{REPO}/compare/{prev}...{tag})")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,18 @@ jobs:
           # 完整历史与 tags：release notes 需要按 tag 范围生成
           fetch-depth: 0
 
+      - name: Resolve version and inject into config
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")"
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          # 把 tag 版本号写入 Cargo.toml 与 tauri.conf.json（发布版本以 tag 为准，无需手动改版本号）
+          python3 scripts/bump-version.py "$TAG"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -38,28 +50,33 @@ jobs:
 
       - name: Build macOS app (Apple Silicon)
         uses: tauri-apps/tauri-action@v0
+        env:
+          # 更新包签名密钥（GitHub Actions Secrets；缺少时构建会自动更新产物会失败）
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --target aarch64-apple-darwin
 
-      - name: Upload to draft release
+      - name: Upload and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            TAG="v$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")"
-          fi
           BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
           DMG="$(ls "$BUNDLE"/dmg/*.dmg | head -1)"
           ZIP="${DMG%.dmg}.app.zip"
           ditto -c -k --keepParent "$BUNDLE/macos/ClipboardX.app" "$ZIP"
+          # 自动更新产物：签名更新包 + 签名 + 更新清单（latest.json）
+          APP_TGZ="$(ls "$BUNDLE"/macos/*.app.tar.gz | head -1)"
+          SIG="${APP_TGZ}.sig"
+          python3 scripts/generate-update-manifest.py "$TAG" "$APP_TGZ" "$SIG" > latest.json
           # 生成结构化 release notes（基于 git 提交日志；存在 RELEASE_NOTES.md 时优先使用）
           python3 scripts/generate-release-notes.py "$TAG" > release-notes.md
+          # 自动发布：不传 --draft，创建即发布；更新清单 latest.json 随之立即可用
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$DMG" "$ZIP" --clobber
-            gh release edit "$TAG" --draft --notes-file release-notes.md
+            # 已存在（如 workflow_dispatch 重复构建）：覆盖产物、刷新日志，并确保已发布
+            gh release upload "$TAG" "$DMG" "$ZIP" "$APP_TGZ" "$SIG" latest.json --clobber
+            gh release edit "$TAG" --draft=false --notes-file release-notes.md
           else
-            gh release create "$TAG" --draft --title "ClipboardX $TAG" --notes-file release-notes.md "$DMG" "$ZIP"
+            gh release create "$TAG" --title "ClipboardX $TAG" --notes-file release-notes.md "$DMG" "$ZIP" "$APP_TGZ" "$SIG" latest.json
           fi

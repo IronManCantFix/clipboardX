@@ -11,6 +11,9 @@
   let tab: 'all' | 'pinned' = $state('all');
   let selected = $state(0);
   let searchInput: HTMLInputElement | undefined = $state();
+  // 弹窗是否处于显示/焦点状态：隐藏期间收到新条目事件跳过刷新，
+  // 避免常驻期反复全量查询 + 重渲染 + 对隐藏窗口 setSize/positionPopover
+  let popupFocused = $state(false);
   let settings = $state<Settings>({
     history_limit: 15,
     shortcut: 'Command+Shift+V',
@@ -118,12 +121,16 @@
       /* 使用默认值 */
     }
     await refresh();
-    onNewEntry(refresh);
+    // 仅窗口可见时刷新；隐藏期间的变更在下次显示时统一刷新（见下方 onFocusChanged）
+    onNewEntry(() => {
+      if (popupFocused) void refresh();
+    });
     searchInput?.focus();
     // 失焦自动隐藏（DOM blur + 窗口焦点事件双保险）
     const onBlur = () => void win.hide();
     window.addEventListener('blur', onBlur);
     void win.onFocusChanged(({ payload: focused }) => {
+      popupFocused = focused;
       if (focused) {
         // 每次显示时重新加载设置与列表，保证外观修改立即生效
         void api.getSettings().then((s) => (settings = s)).catch(() => {});

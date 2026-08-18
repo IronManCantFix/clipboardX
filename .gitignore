@@ -16,3 +16,4 @@ src-tauri/target/
 
 # 发布产物（由发布流程生成并上传到 GitHub Release）
 /latest.json
+updater-keys/

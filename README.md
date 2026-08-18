@@ -48,13 +48,46 @@ npm run dev:stop
 npm run tauri build
 
 # 产物位置：src-tauri/target/release/bundle/
+# 自动更新：构建时提供签名环境变量（TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD）
+# 会额外产出更新包 ClipboardX.app.tar.gz 与其 minisign 签名 .sig
 ```
 
 ## CI 构建
 
-GitHub Actions 会在推送 `v*` 标签时自动构建 macOS（Apple 芯片）应用，并把构建产物（`.dmg` / `.app.zip`）上传到 GitHub Releases 的**草稿**中，见 [`.github/workflows/build.yml`](.github/workflows/build.yml)。在 Release 页面发布草稿后即可供下载。
+GitHub Actions 会在推送 `v*` 标签时自动构建 macOS（Apple 芯片）应用，并**自动发布**到 GitHub Releases（无需人工步骤）：构建产物（`.dmg` / `.app.zip` / 更新包 `.app.tar.gz` + 签名 `.sig` / 更新清单 `latest.json`）与更新日志会一起上传并发布，见 [`.github/workflows/build.yml`](.github/workflows/build.yml)。发布完成后，应用内的「检查更新」即可通过 `releases/latest/download/latest.json` 拉到新版本并自动安装。
 
-Release 草稿的更新日志由 [`scripts/generate-release-notes.py`](scripts/generate-release-notes.py) 根据提交日志自动生成（按 `fix:` / `feat:` / `perf:` 等类型分组）。如需人工覆盖，可在仓库根目录放置 `RELEASE_NOTES.md`，其内容将完全替代自动生成的日志。
+更新日志由 [`scripts/generate-release-notes.py`](scripts/generate-release-notes.py) 自动生成：按 `fix:` / `feat:` / `perf:` 等类型分组，含发布时间、变更范围、提交总数与短哈希，并附完整提交对比链接。如需人工覆盖，可在仓库根目录放置 `RELEASE_NOTES.md`，其内容将完全替代自动生成的日志。
+
+### 发布新版本（只需打标签）
+
+版本号以 tag 为准，CI 自动注入 `Cargo.toml` 与 `tauri.conf.json`，**无需手动修改版本号**：
+
+```bash
+git tag v0.1.19
+git push origin v0.1.19
+```
+
+推送后 CI 自动完成：注入版本号 → 构建 → minisign 签名 → 生成更新日志 → 发布 Release。用户应用内点「检查更新」即可自动升级。
+
+> tag 必须是 `vX.Y.Z` 格式（如 `v0.1.19`；支持 `v0.1.19-beta.1` 预发布版本）。本地想构建指定版本时，可先运行 `python3 scripts/bump-version.py v0.1.19` 再 `npm run tauri build`。
+
+### 自动更新密钥（首次配置一次）
+
+更新包使用 minisign 签名。密钥只需在本地生成一次（私钥位于 `updater-keys/tauri.key`，已被 `.gitignore` 忽略，**切勿提交**）：
+
+```bash
+# 生成密钥（-p 后跟密码）
+npx tauri signer generate -w updater-keys/tauri.key -p <密码> --ci
+
+# 把 tauri.key.pub 的内容（base64）写入 src-tauri/tauri.conf.json 的 plugins.updater.pubkey
+```
+
+然后在 GitHub 仓库 **Settings → Secrets and variables → Actions** 添加两个 secret：
+
+- `TAURI_SIGNING_PRIVATE_KEY`：`updater-keys/tauri.key` 的**文件内容**（它本身已是 base64，直接复制，不要再次编码；可查看 `updater-keys/README.txt`）
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：密钥密码
+
+> 丢失私钥或密码将无法再发布可自动更新的版本；届时需重新生成密钥并更新 `tauri.conf.json` 中的 `pubkey`（旧版本会因公钥不匹配无法自动升级，需手动安装一次新版本）。
 
 ## macOS 安装（未签名应用）
 
@@ -113,7 +146,7 @@ ClipboardX 通过模拟 `⌘V` 实现自动粘贴，需要 macOS 辅助功能权
 - 快捷键录制
 - 开机自启
 - 存储统计 + 清除图片缓存
-- 检查更新
+- 检查更新（发现新版本后一键自动下载安装并重启）
 
 ## 数据存储
 
