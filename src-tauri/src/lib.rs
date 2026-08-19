@@ -47,10 +47,6 @@ pub fn run() {
             };
             app.manage(state);
 
-            // 未签名应用更新后辅助功能授权会失效：
-            // 版本变化时自动清除旧授权记录，首次粘贴时系统重新弹窗授权
-            shortcut::reset_accessibility_if_version_changed(app.handle());
-
             // 设置窗口懒加载：首次打开时创建，关闭即销毁（不常驻 WebView 进程）
 
             // 托盘：左键/菜单弹出设置窗口
