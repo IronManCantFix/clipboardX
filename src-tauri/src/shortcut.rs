@@ -26,6 +26,12 @@ extern "C" {
     fn CFRelease(cf: *const std::ffi::c_void);
 }
 
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGMainDisplayID() -> u32;
+    fn CGDisplayPixelsHigh(display: u32) -> usize;
+}
+
 /// 当前进程是否已获得 macOS 辅助功能权限。
 pub fn ax_is_trusted() -> bool {
     unsafe { AXIsProcessTrusted() }
@@ -122,7 +128,6 @@ fn remember_front_app() {
     LAST_FRONT_APP_PID.store(pid, Ordering::SeqCst);
 }
 
-
 /// 把焦点还给唤起前的前台应用。
 pub fn activate_front_app() {
     let pid = LAST_FRONT_APP_PID.load(Ordering::SeqCst);
@@ -138,16 +143,11 @@ pub fn activate_front_app() {
     });
 }
 
-/// 当前鼠标位置（逻辑坐标，左上原点），用于弹窗定位。
-pub fn cursor_position() -> Option<(f64, f64)> {
+/// 当前鼠标位置（AppKit 全局坐标，主屏左下为原点；副屏可为负坐标）。
+pub fn cursor_global() -> Option<(f64, f64)> {
     objc2::rc::autoreleasepool(|_| {
         let p = objc2_app_kit::NSEvent::mouseLocation();
-        let marker = objc2::MainThreadMarker::new()?;
-        let screen = objc2_app_kit::NSScreen::mainScreen(marker)?;
-        let frame = screen.frame();
-        let x = p.x - frame.origin.x;
-        let y = frame.origin.y + frame.size.height - p.y;
-        Some((x, y))
+        Some((p.x, p.y))
     })
 }
 
@@ -162,14 +162,14 @@ pub fn show_popover(app: &AppHandle) {
         .settings
         .position_mode
         .clone();
-    if let Some(cursor) = cursor_position() {
-        *LAST_CURSOR.lock().unwrap() = Some(cursor);
+    if let Some(cursor) = cursor_global() {
+        *LAST_CURSOR.lock().unwrap_or_else(|p| p.into_inner()) = Some(cursor);
     }
     if let Some(win) = app.get_webview_window("main") {
         if mode == "center" {
             let _ = win.center();
         } else {
-            let _ = position_window(&win, None);
+            let _ = position_window(&win);
         }
         // 标记唤起保护期，并推迟 show/set_focus 到下一帧：
         // accessory app 在同一帧内 set_focus 无效，且窗口未聚焦会触发
@@ -183,42 +183,60 @@ pub fn show_popover(app: &AppHandle) {
     }
 }
 
-/// 主屏幕逻辑坐标边界 (x, y, w, h)。
-fn main_screen_bounds() -> Option<(f64, f64, f64, f64)> {
+/// 主显示器像素高度。tao 在 macOS 上用 `CGDisplay::main().pixels_high() - y` 把
+/// 窗口逻辑坐标（左上原点）翻转成 AppKit 坐标，这里用同一个常量保证多屏下坐标一致。
+fn main_pixels_high() -> f64 {
+    unsafe { CGDisplayPixelsHigh(CGMainDisplayID()) as f64 }
+}
+
+/// 鼠标所在屏幕的全局 frame（AppKit 坐标：主屏左下为原点，副屏可为负坐标）。
+/// 遍历所有屏幕找到包含鼠标的那一个，多显示器下弹窗跟随鼠标所在屏幕。
+fn cursor_screen_frame() -> Option<(f64, f64, f64, f64)> {
     objc2::rc::autoreleasepool(|_| {
+        let p = objc2_app_kit::NSEvent::mouseLocation();
         let marker = MainThreadMarker::new()?;
-        let screen = objc2_app_kit::NSScreen::mainScreen(marker)?;
-        let f = screen.frame();
+        for screen in objc2_app_kit::NSScreen::screens(marker).iter() {
+            let f = screen.frame();
+            let (ox, oy, sw, sh) = (f.origin.x, f.origin.y, f.size.width, f.size.height);
+            if p.x >= ox && p.x < ox + sw && p.y >= oy && p.y < oy + sh {
+                return Some((ox, oy, sw, sh));
+            }
+        }
+        // 兜底：主屏
+        let f = objc2_app_kit::NSScreen::mainScreen(marker)?.frame();
         Some((f.origin.x, f.origin.y, f.size.width, f.size.height))
     })
 }
 
-/// 将窗口定位到鼠标附近，超出屏幕边缘时自动向内避让。
-fn position_window(
-    win: &tauri::WebviewWindow,
-    size_override: Option<(f64, f64)>,
-) -> Result<(), String> {
+/// 将窗口定位到鼠标附近，超出鼠标所在屏幕边缘时自动向内避让（多显示器跟随鼠标）。
+fn position_window(win: &tauri::WebviewWindow) -> Result<(), String> {
     let scale = win.scale_factor().map_err(|e| e.to_string())?;
-    let (w, h) = match size_override {
-        Some(sz) => sz,
-        None => {
-            let size = win.outer_size().map_err(|e| e.to_string())?;
-            (size.width as f64 / scale, size.height as f64 / scale)
-        }
-    };
-    let Some((sx, sy, sw, sh)) = main_screen_bounds() else {
+    let size = win.outer_size().map_err(|e| e.to_string())?;
+    let (w, h) = (size.width as f64 / scale, size.height as f64 / scale);
+    let Some((sx, sy, sw, sh)) = cursor_screen_frame() else {
         return Ok(());
     };
+    let fallback = (sx + sw / 2.0, sy + sh / 2.0);
+    let cursor = cursor_global()
+        .or_else(|| *LAST_CURSOR.lock().unwrap_or_else(|p| p.into_inner()))
+        .unwrap_or(fallback);
+    // 换算成 tao 逻辑坐标（x 距主屏左缘，y 距主屏上缘；翻转常量与 tao 的 window_position 一致）
+    let ph = main_pixels_high();
+    let (mut x, mut y) = (cursor.0, ph - cursor.1);
+    // 鼠标所在屏幕在 tao 逻辑坐标中的边界
+    let left = sx;
+    let top = ph - (sy + sh);
+    let right = sx + sw;
+    let bottom = ph - sy;
     let margin = 8.0;
-    let (mut x, mut y) = LAST_CURSOR.lock().unwrap().unwrap_or((sx + sw / 2.0, sy + sh / 2.0));
-    if x + w > sx + sw - margin {
-        x = sx + sw - w - margin;
+    if x + w > right - margin {
+        x = right - w - margin;
     }
-    if y + h > sy + sh - margin {
-        y = sy + sh - h - margin;
+    if y + h > bottom - margin {
+        y = bottom - h - margin;
     }
-    x = x.max(sx + margin);
-    y = y.max(sy + margin);
+    x = x.max(left + margin);
+    y = y.max(top + margin);
     win.set_position(LogicalPosition::new(x, y))
         .map_err(|e| e.to_string())
 }
@@ -238,7 +256,7 @@ pub fn position_popover(app: tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
     if let Some(win) = app.get_webview_window("main") {
-        position_window(&win, None)?;
+        position_window(&win)?;
     }
     Ok(())
 }
@@ -251,15 +269,40 @@ pub fn shortcut_handler() -> impl Fn(&AppHandle, &Shortcut, ShortcutEvent) + Sen
     }
 }
 
-/// 注销全部快捷键并按新值注册。
+/// 注册全局快捷键（启动时使用；进程内尚无已注册的键）。
 pub fn register_shortcut(app: &AppHandle, shortcut_str: &str) -> Result<(), String> {
     let shortcut: Shortcut = shortcut_str
         .parse()
         .map_err(|e| format!("invalid shortcut {shortcut_str}: {e}"))?;
-    let _ = app.global_shortcut().unregister_all();
     app.global_shortcut()
         .on_shortcut(shortcut, shortcut_handler())
         .map_err(|e| format!("register shortcut failed: {e}"))?;
     println!("[clipboardx] global shortcut registered: {shortcut_str}");
+    Ok(())
+}
+
+/// 替换快捷键：先注册新键，成功后才注销旧键。
+/// 注册失败（如与其它应用冲突）时旧键保持可用、设置不落盘，不会出现快捷键丢失。
+pub fn replace_shortcut(
+    app: &AppHandle,
+    new_shortcut: &str,
+    old_shortcut: &str,
+) -> Result<(), String> {
+    if new_shortcut == old_shortcut {
+        return Ok(());
+    }
+    let new: Shortcut = new_shortcut
+        .parse()
+        .map_err(|e| format!("invalid shortcut {new_shortcut}: {e}"))?;
+    // 幂等：若新键已被本应用注册（重复保存/失败残留），先注销再注册
+    if app.global_shortcut().is_registered(new) {
+        let _ = app.global_shortcut().unregister(new);
+    }
+    app.global_shortcut()
+        .on_shortcut(new, shortcut_handler())
+        .map_err(|e| format!("register shortcut {new_shortcut} failed: {e}"))?;
+    // 新键注册成功后再注销旧键
+    let _ = app.global_shortcut().unregister(old_shortcut);
+    println!("[clipboardx] global shortcut updated: {old_shortcut} -> {new_shortcut}");
     Ok(())
 }

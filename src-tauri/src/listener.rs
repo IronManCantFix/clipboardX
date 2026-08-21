@@ -49,12 +49,14 @@ fn content_hash(data: &[u8]) -> u64 {
     h.finish()
 }
 
-
 use crate::clipboard::{change_count, read_clipboard};
 use crate::commands::AppState;
 use crate::models::EntryType;
-use crate::store::NewEntry;
+use crate::settings::SettingsStore;
+use crate::store::{NewEntry, Store};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::MutexGuard;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -65,11 +67,10 @@ fn now_ts() -> i64 {
         .unwrap_or(0)
 }
 
-#[cfg(test)]
-fn now_ms() -> i64 {
+fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
 
@@ -79,8 +80,7 @@ pub fn cleanup_orphan_images(data_dir: &std::path::Path, store: &crate::store::S
     let Ok(entries) = store.all_image_paths() else {
         return;
     };
-    let referenced: std::collections::HashSet<&str> =
-        entries.iter().map(|s| s.as_str()).collect();
+    let referenced: std::collections::HashSet<&str> = entries.iter().map(|s| s.as_str()).collect();
     let Ok(rd) = std::fs::read_dir(&images_dir) else {
         return;
     };
@@ -97,115 +97,181 @@ pub fn cleanup_orphan_images(data_dir: &std::path::Path, store: &crate::store::S
     }
 }
 
-pub fn spawn_listener(app: AppHandle) {
-    std::thread::spawn(move || {
-        let mut last_count = change_count();
-        let mut last_detected: Option<Detected> = None;
-        loop {
-            std::thread::sleep(Duration::from_millis(750));
-            // 先只查 changeCount，未变化则完全跳过全量读取（省内存/CPU）
-            if change_count() == last_count {
-                continue;
+/// 监听线程心跳（毫秒时间戳）。看门狗检测到心跳停滞（panic/死锁）后自动重启监听线程。
+static LAST_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
+
+/// 锁容错：监听线程不允许因锁中毒而死亡，取回被毒化的内部值继续使用。
+fn lock_store(state: &AppState) -> MutexGuard<'_, Store> {
+    state.store.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn lock_settings(state: &AppState) -> MutexGuard<'_, SettingsStore> {
+    state.settings.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 去重 + 落库 + 剪枝清理 + 通知前端。图片由工作线程调用，其余类型在监听线程内联调用。
+fn commit_entry(app: &AppHandle, new_entry: NewEntry) {
+    let state = app.state::<AppState>();
+    let kind = new_entry.kind;
+    let now = new_entry.last_used_at;
+    let limit = lock_settings(&state).settings.history_limit;
+    {
+        let store = lock_store(&state);
+        // 全局去重：内容已存在则移到最前，不重复插入
+        let existing = match new_entry.content_hash {
+            Some(h) => store.find_by_content_hash(h).unwrap_or(None),
+            None => store
+                .find_by_content(kind, &new_entry.content)
+                .unwrap_or(None),
+        };
+        match existing {
+            Some(existing_id) => {
+                let _ = store.touch(existing_id, now);
             }
-            let snap = read_clipboard();
-            if snap.change_count == last_count {
-                continue;
-            }
-            last_count = snap.change_count;
-            let state = app.state::<AppState>();
-            let Some(detected) = classify(&snap) else {
-                continue;
-            };
-            if last_detected.as_ref().is_some_and(|p| same_content(p, &detected)) {
-                continue;
-            }
-            last_detected = Some(detected.clone());
-            let now = now_ts();
-            let (kind, content, content_hash, rtf, files, image_path, thumb_path) = match &detected {
-                Detected::Text(s) => (EntryType::Text, s.clone(), None, None, vec![], None, None),
-                Detected::Url(s) => (EntryType::Url, s.clone(), None, None, vec![], None, None),
-                Detected::Rtf(r) => (
-                    EntryType::Rtf,
-                    "[富文本]".into(),
-                    None,
-                    Some(r.clone()),
-                    vec![],
-                    None,
-                    None,
-                ),
-                Detected::Files(f) => (EntryType::File, f.join(", "), None, None, f.clone(), None, None),
-                Detected::Image(hash) => {
-                    let data_dir = state.data_dir.clone();
-                    let paths = snap
-                        .tiff
-                        .as_deref()
-                        .and_then(|tiff| save_image(tiff, *hash, &data_dir).ok());
-                    let (path, thumb_path) = match paths {
-                        Some((p, t)) => (p, Some(t)),
-                        None => continue, // 图片保存失败则跳过
-                    };
-                    (
-                        EntryType::Image,
-                        "[图片]".into(),
-                        Some(*hash as i64),
-                        None,
-                        vec![],
-                        Some(path),
-                        thumb_path,
-                    )
+            None => {
+                let _ = store.insert(&new_entry);
+                if let Ok(removed) = store.prune(limit) {
+                    drop(store);
+                    for e in &removed {
+                        crate::commands::remove_image_file(e);
+                    }
                 }
+            }
+        }
+    }
+    println!(
+        "[clipboardx] captured {:?} from {}",
+        kind,
+        new_entry.source_app.as_deref().unwrap_or("?")
+    );
+    let _ = app.emit("clipboard:new-entry", ());
+}
+
+/// 监听线程单次迭代：检测剪贴板变化并捕获条目。任何 panic 由调用方捕获，不影响线程存活。
+fn listener_iteration(
+    app: &AppHandle,
+    last_count: &mut isize,
+    last_detected: &mut Option<Detected>,
+) {
+    // 先只查 changeCount，未变化则完全跳过全量读取（省内存/CPU）
+    if change_count() == *last_count {
+        return;
+    }
+    let mut snap = read_clipboard();
+    if snap.change_count == *last_count {
+        return;
+    }
+    *last_count = snap.change_count;
+    let state = app.state::<AppState>();
+    let Some(detected) = classify(&snap) else {
+        return;
+    };
+    if last_detected
+        .as_ref()
+        .is_some_and(|p| same_content(p, &detected))
+    {
+        return;
+    }
+    *last_detected = Some(detected.clone());
+    let now = now_ts();
+    let source_app = frontmost_app_name();
+    if let Detected::Image(hash) = &detected {
+        // 图片保存（TIFF 解码 + PNG 编码）较慢：移到独立工作线程，避免阻塞监听
+        let Some(tiff) = snap.tiff.take() else {
+            return;
+        };
+        let data_dir = state.data_dir.clone();
+        let worker_app = app.clone();
+        let hash = *hash;
+        let source_app = source_app.clone();
+        std::thread::spawn(move || {
+            let Ok((path, thumb_path)) = save_image(&tiff, hash, &data_dir) else {
+                println!("[clipboardx] image save skipped (too large or decode failed)");
+                return;
             };
-            let source_app = frontmost_app_name();
-            let source_app_log = source_app.clone();
             let new_entry = NewEntry {
-                kind,
-                content,
-                content_hash,
-                rtf_data: rtf,
-                image_path,
-                thumb_path,
-                file_paths: files,
+                kind: EntryType::Image,
+                content: "[图片]".into(),
+                content_hash: Some(hash as i64),
+                rtf_data: None,
+                image_path: Some(path),
+                thumb_path: Some(thumb_path),
+                file_paths: vec![],
                 source_app,
                 created_at: now,
                 last_used_at: now,
             };
-            let limit = state.settings.lock().unwrap().settings.history_limit;
-            {
-                let store = state.store.lock().unwrap();
-                // 全局去重：内容已存在则移到最前，不重复插入
-                let existing = match new_entry.content_hash {
-                    Some(h) => store.find_by_content_hash(h).unwrap_or(None),
-                    None => store.find_by_content(kind, &new_entry.content).unwrap_or(None),
-                };
-                match existing {
-                    Some(existing_id) => {
-                        let _ = store.touch(existing_id, now);
-                    }
-                    None => {
-                        let _ = store.insert(&new_entry);
-                        if let Ok(removed) = store.prune(limit) {
-                            drop(store);
-                            for e in &removed {
-                                crate::commands::remove_image_file(e);
-                            }
-                        }
-                    }
-                }
+            commit_entry(&worker_app, new_entry);
+        });
+        return;
+    }
+    let (kind, content, content_hash, rtf, files) = match &detected {
+        Detected::Text(s) => (EntryType::Text, s.clone(), None, None, vec![]),
+        Detected::Url(s) => (EntryType::Url, s.clone(), None, None, vec![]),
+        Detected::Rtf(r) => (
+            EntryType::Rtf,
+            "[富文本]".into(),
+            None,
+            Some(r.clone()),
+            vec![],
+        ),
+        Detected::Files(f) => (EntryType::File, f.join(", "), None, None, f.clone()),
+        Detected::Image(_) => unreachable!("image handled above"),
+    };
+    let new_entry = NewEntry {
+        kind,
+        content,
+        content_hash,
+        rtf_data: rtf,
+        image_path: None,
+        thumb_path: None,
+        file_paths: files,
+        source_app,
+        created_at: now,
+        last_used_at: now,
+    };
+    commit_entry(app, new_entry);
+}
+
+fn spawn_listener_worker(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut last_count = change_count();
+        let mut last_detected: Option<Detected> = None;
+        loop {
+            LAST_HEARTBEAT.store(now_ms(), Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(300));
+            // 捕获单次迭代的任何 panic：失败只跳过这一次，监听线程保持存活
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                listener_iteration(&app, &mut last_count, &mut last_detected);
+            }));
+            if result.is_err() {
+                eprintln!("[clipboardx] listener iteration panicked (recovered)");
             }
-            println!(
-                "[clipboardx] captured {:?} from {}",
-                kind,
-                source_app_log.as_deref().unwrap_or("?")
-            );
-            let _ = app.emit("clipboard:new-entry", ());
         }
     });
+}
+
+/// 启动剪贴板监听：工作线程 + 看门狗（心跳停滞超过 10s 自动重启工作线程）。
+pub fn spawn_listener(app: AppHandle) {
+    let watchdog_app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(5));
+        let last = LAST_HEARTBEAT.load(Ordering::Relaxed);
+        if last > 0 && now_ms().saturating_sub(last) > 10_000 {
+            println!("[clipboardx] listener heartbeat stale; restarting listener");
+            LAST_HEARTBEAT.store(now_ms(), Ordering::Relaxed);
+            spawn_listener_worker(watchdog_app.clone());
+        }
+    });
+    spawn_listener_worker(app);
 }
 
 /// 像素上限：超过则跳过保存，避免超大图（如 8K 截图）全量解码造成内存尖峰。
 const MAX_IMAGE_PIXELS: u64 = 24_000_000;
 
 /// 将 TIFF 数据转为 PNG 存入 images 目录，返回 (原图路径, 缩略图路径)。
+/// 原图保持原始分辨率（超过 MAX_IMAGE_PIXELS 的图在头部检查时已拒绝），
+/// 保证粘贴回退的是完整原图；缩略图单独降采样供弹窗列表展示。
 /// 文件名基于内容 hash：同一张图重复复制时直接复用已有文件，不重复保存。
 fn save_image(tiff: &[u8], hash: u64, data_dir: &Path) -> Result<(String, String), String> {
     let images_dir = data_dir.join("images");
@@ -230,9 +296,8 @@ fn save_image(tiff: &[u8], hash: u64, data_dir: &Path) -> Result<(String, String
     }
     let img = image::load_from_memory_with_format(tiff, image::ImageFormat::Tiff)
         .map_err(|e| format!("tiff decode failed: {e}"))?;
-    // 原图：最长边超过 1600px 时缩小，控制磁盘占用
-    let main = downscale(&img, 1600);
-    main.save_with_format(&path, image::ImageFormat::Png)
+    // 原图：保持原始分辨率保存，粘贴回退时得到完整原图
+    img.save_with_format(&path, image::ImageFormat::Png)
         .map_err(|e| format!("png save failed: {e}"))?;
     // 缩略图：最长边 360px，弹窗列表展示用，降低渲染内存
     let thumb = downscale(&img, 360);

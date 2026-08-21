@@ -1,6 +1,6 @@
 use crate::models::{Entry, EntryType};
 use rusqlite::{params, Connection};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct NewEntry {
@@ -18,6 +18,7 @@ pub struct NewEntry {
 
 pub struct Store {
     conn: Connection,
+    path: PathBuf,
 }
 
 fn entry_from_row(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
@@ -66,6 +67,8 @@ impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // 启动时回收上次异常退出残留的 WAL 文件（新库时为空操作，开销可忽略）
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,7 +94,35 @@ impl Store {
         if !has_col {
             conn.execute_batch("ALTER TABLE entries ADD COLUMN content_hash INTEGER;")?;
         }
-        Ok(Store { conn })
+        Ok(Store {
+            conn,
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// 主数据库文件超过阈值时，在后台线程做一次 VACUUM，回收被 prune 释放的空间。
+    /// 使用独立连接并重试，避开与主连接活动事务的短暂 BUSY（WAL 模式下可自愈）。
+    pub fn vacuum_if_large(&self, threshold: u64) {
+        let size = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
+        if size <= threshold {
+            return;
+        }
+        let path = self.path.clone();
+        std::thread::spawn(move || {
+            for _ in 0..6 {
+                let Ok(conn) = Connection::open(&path) else {
+                    break;
+                };
+                let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+                let done = conn.execute_batch("VACUUM;").is_ok();
+                drop(conn);
+                if done {
+                    println!("[clipboardx] database vacuumed");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        });
     }
 
     pub fn insert(&self, e: &NewEntry) -> rusqlite::Result<i64> {
@@ -116,9 +147,9 @@ impl Store {
 
     /// 按图片内容 hash 查已存在的条目（图片去重专用）。
     pub fn find_by_content_hash(&self, hash: i64) -> rusqlite::Result<Option<i64>> {
-        let mut stmt =
-            self.conn
-                .prepare("SELECT id FROM entries WHERE type = 'image' AND content_hash = ?1 LIMIT 1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM entries WHERE type = 'image' AND content_hash = ?1 LIMIT 1")?;
         let mut rows = stmt.query_map(params![hash], |r| r.get(0))?;
         rows.next().transpose()
     }
@@ -143,11 +174,9 @@ impl Store {
     }
 
     pub fn list(&self) -> rusqlite::Result<Vec<Entry>> {
-        self.query_light(
-            &format!(
-                "SELECT {LIGHT_COLUMNS} FROM entries ORDER BY last_used_at DESC"
-            ),
-        )
+        self.query_light(&format!(
+            "SELECT {LIGHT_COLUMNS} FROM entries ORDER BY last_used_at DESC"
+        ))
     }
 
     pub fn list_pinned(&self) -> rusqlite::Result<Vec<Entry>> {
@@ -164,15 +193,14 @@ impl Store {
     }
 
     /// 按类型与内容查找已有条目（用于全局去重）。
-    pub fn find_by_content(
-        &self,
-        kind: EntryType,
-        content: &str,
-    ) -> rusqlite::Result<Option<i64>> {
-        let kind_str = serde_json::to_string(&kind).unwrap().trim_matches('"').to_string();
-        let mut stmt = self.conn.prepare(
-            "SELECT id FROM entries WHERE type = ?1 AND content = ?2 LIMIT 1",
-        )?;
+    pub fn find_by_content(&self, kind: EntryType, content: &str) -> rusqlite::Result<Option<i64>> {
+        let kind_str = serde_json::to_string(&kind)
+            .unwrap()
+            .trim_matches('"')
+            .to_string();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM entries WHERE type = ?1 AND content = ?2 LIMIT 1")?;
         let mut rows = stmt.query_map(params![kind_str, content], |r| r.get(0))?;
         rows.next().transpose()
     }
@@ -203,7 +231,8 @@ impl Store {
         let victims = self.query_light(&format!(
             "SELECT {LIGHT_COLUMNS} FROM entries WHERE pinned = 0"
         ))?;
-        self.conn.execute("DELETE FROM entries WHERE pinned = 0", [])?;
+        self.conn
+            .execute("DELETE FROM entries WHERE pinned = 0", [])?;
         Ok(victims)
     }
 
@@ -212,13 +241,16 @@ impl Store {
         let victims = self.query_light(&format!(
             "SELECT {LIGHT_COLUMNS} FROM entries WHERE type = 'image' AND pinned = 0"
         ))?;
-        self.conn
-            .execute("DELETE FROM entries WHERE type = 'image' AND pinned = 0", [])?;
+        self.conn.execute(
+            "DELETE FROM entries WHERE type = 'image' AND pinned = 0",
+            [],
+        )?;
         Ok(victims)
     }
 
     pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
-        self.conn.execute("DELETE FROM entries WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM entries WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -260,8 +292,12 @@ mod tests {
             .unwrap()
             .as_nanos();
         let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir()
-            .join(format!("clipboardx-test-{}-{}-{}", std::process::id(), nanos, n));
+        let dir = std::env::temp_dir().join(format!(
+            "clipboardx-test-{}-{}-{}",
+            std::process::id(),
+            nanos,
+            n
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         Store::open(&dir.join("test.db")).unwrap()
     }
@@ -327,7 +363,10 @@ mod tests {
         let _ = s.insert(&text_entry("other", 200)).unwrap();
         let found = s.find_by_content(EntryType::Text, "same").unwrap();
         assert_eq!(found, Some(id_a));
-        assert!(s.find_by_content(EntryType::Text, "nope").unwrap().is_none());
+        assert!(s
+            .find_by_content(EntryType::Text, "nope")
+            .unwrap()
+            .is_none());
         assert!(s.find_by_content(EntryType::Url, "same").unwrap().is_none());
     }
 }
@@ -345,8 +384,12 @@ mod extra_tests {
             .unwrap()
             .as_nanos();
         let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir()
-            .join(format!("clipboardx-test-{}-{}-{}", std::process::id(), nanos, n));
+        let dir = std::env::temp_dir().join(format!(
+            "clipboardx-test-{}-{}-{}",
+            std::process::id(),
+            nanos,
+            n
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         Store::open(&dir.join("test.db")).unwrap()
     }
@@ -432,7 +475,9 @@ mod extra_tests {
         let id_text = s.insert(&text_entry("hello", 100)).unwrap();
         let id_url = s.insert(&url_entry("https://example.com", 200)).unwrap();
         let id_file = s.insert(&file_entry(vec!["/tmp/a.txt"], 300)).unwrap();
-        let id_rtf = s.insert(&rtf_entry(vec![0x7b, 0x5c, 0x72, 0x74, 0x66], 400)).unwrap();
+        let id_rtf = s
+            .insert(&rtf_entry(vec![0x7b, 0x5c, 0x72, 0x74, 0x66], 400))
+            .unwrap();
         let id_img = s.insert(&image_entry(123, 500)).unwrap();
 
         let list = s.list().unwrap();
@@ -481,20 +526,38 @@ mod extra_tests {
 
         // store.insert 本身不 dedupe；这里验证 find_by_content 能正确查找
         let id_text = s.insert(&text_entry("dup", 100)).unwrap();
-        assert_eq!(s.find_by_content(EntryType::Text, "dup").unwrap(), Some(id_text));
-        assert!(s.find_by_content(EntryType::Text, "missing").unwrap().is_none());
+        assert_eq!(
+            s.find_by_content(EntryType::Text, "dup").unwrap(),
+            Some(id_text)
+        );
+        assert!(s
+            .find_by_content(EntryType::Text, "missing")
+            .unwrap()
+            .is_none());
 
         let id_url = s.insert(&url_entry("https://same", 300)).unwrap();
-        assert_eq!(s.find_by_content(EntryType::Url, "https://same").unwrap(), Some(id_url));
+        assert_eq!(
+            s.find_by_content(EntryType::Url, "https://same").unwrap(),
+            Some(id_url)
+        );
 
         let id_file = s.insert(&file_entry(vec!["/tmp/x.txt"], 500)).unwrap();
-        assert_eq!(s.find_by_content(EntryType::File, "/tmp/x.txt").unwrap(), Some(id_file));
+        assert_eq!(
+            s.find_by_content(EntryType::File, "/tmp/x.txt").unwrap(),
+            Some(id_file)
+        );
 
         let id_rtf = s.insert(&rtf_entry(vec![1, 2, 3], 700)).unwrap();
-        assert_eq!(s.find_by_content(EntryType::Rtf, "[富文本]").unwrap(), Some(id_rtf));
+        assert_eq!(
+            s.find_by_content(EntryType::Rtf, "[富文本]").unwrap(),
+            Some(id_rtf)
+        );
 
         // 各类型之间 content 相同也不应互相匹配
-        assert!(s.find_by_content(EntryType::Text, "[富文本]").unwrap().is_none());
+        assert!(s
+            .find_by_content(EntryType::Text, "[富文本]")
+            .unwrap()
+            .is_none());
         assert!(s.find_by_content(EntryType::Url, "dup").unwrap().is_none());
     }
 

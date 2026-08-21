@@ -13,9 +13,9 @@ A modern, minimal clipboard manager for macOS — native feel, fully offline, lo
 - **Smart dedupe** — copying the same content again moves it to the top instead of duplicating
 - **Instant search** — fuzzy or exact matching, case-insensitive, under 50ms
 - **Pin** — keep important entries pinned on top (pinned items are never auto-cleaned)
-- **Images** — thumbnail previews in the list, original images loaded on demand
+- **Images** — thumbnail previews in the list; originals saved at full resolution (pasting restores the complete image), loaded on demand
 - **Global dedupe** — duplicate content moves to front without repetition
-- **Screen-aware positioning** — the popover stays on-screen near your cursor
+- **Screen-aware positioning** — the popover stays near your cursor, avoids screen edges, and follows the cursor across multiple displays
 - **Auto cleanup** — by count (default 15, up to 100) with pinned items protected
 - **Menu-bar app** — no Dock icon, launches at login (optional)
 - **Fully offline** — no network, no telemetry, no cloud

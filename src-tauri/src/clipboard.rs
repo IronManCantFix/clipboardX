@@ -44,16 +44,13 @@ pub fn read_clipboard() -> ClipboardSnapshot {
         let (type_string, type_rtf, type_tiff, type_files) = type_constants();
         let pb = NSPasteboard::generalPasteboard();
         let change_count = pb.changeCount();
-        let text = pb
-            .stringForType(type_string)
-            .map(|s| s.to_string());
+        let text = pb.stringForType(type_string).map(|s| s.to_string());
         let rtf = pb.dataForType(type_rtf).map(|d| d.to_vec());
         let files: Vec<String> = pb
             .propertyListForType(type_files)
             .map(|pl| {
                 // 剪贴板 filenames 属性必然是 NSString 数组
-                let arr: Retained<NSArray<NSString>> =
-                    unsafe { Retained::cast_unchecked(pl) };
+                let arr: Retained<NSArray<NSString>> = unsafe { Retained::cast_unchecked(pl) };
                 arr.iter().map(|s| s.to_string()).collect()
             })
             .unwrap_or_default();

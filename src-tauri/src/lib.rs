@@ -38,6 +38,8 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let store = store::Store::open(&data_dir.join("entries.db"))
                 .map_err(|e| format!("db open failed: {e}"))?;
+            // 大库（如长期积累的富文本/长文本历史）在后台线程 VACUUM 一次，回收被 prune 释放的空间
+            store.vacuum_if_large(32 * 1024 * 1024);
             let settings = settings::SettingsStore::load(&data_dir.join("settings.json"))
                 .map_err(|e| format!("settings load failed: {e}"))?;
             let state = commands::AppState {
@@ -55,12 +57,12 @@ pub fn run() {
                 use tauri::tray::TrayIconBuilder;
                 let show_settings =
                     MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
-                let quit =
-                    MenuItem::with_id(app, "quit", "退出 ClipboardX", true, None::<&str>)?;
+                let quit = MenuItem::with_id(app, "quit", "退出 ClipboardX", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&show_settings, &quit])?;
                 // 菜单栏图标：显式使用与应用图标一致的 32x32 彩色图标
-                let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
-                    .map_err(|e| format!("tray icon load failed: {e}"))?;
+                let tray_icon =
+                    tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
+                        .map_err(|e| format!("tray icon load failed: {e}"))?;
                 TrayIconBuilder::with_id("main-tray")
                     .icon(tray_icon)
                     .menu(&menu)
@@ -77,10 +79,13 @@ pub fn run() {
 
             // 辅助功能权限检测（仅记录，不自动弹窗打扰用户；粘贴失败时前端会提示）
             if !shortcut::ax_is_trusted() {
-                println!("[clipboardx] 辅助功能权限未授予：模拟粘贴不可用，请在系统设置中授权后重启应用");
+                println!(
+                    "[clipboardx] 辅助功能权限未授予：模拟粘贴不可用，请在系统设置中授权后重启应用"
+                );
             }
 
-            // 全局快捷键：从设置读取（默认 Command+Shift+V），重启后保持用户自定义值
+            // 全局快捷键：从设置读取（默认 Command+Shift+V），重启后保持用户自定义值。
+            // 注册失败（如与其它应用冲突）不阻断启动：记录日志，用户可在设置中更换。
             let shortcut_str = app
                 .state::<crate::commands::AppState>()
                 .settings
@@ -89,8 +94,9 @@ pub fn run() {
                 .settings
                 .shortcut
                 .clone();
-            shortcut::register_shortcut(app.handle(), &shortcut_str)
-                .map_err(|e| format!("register shortcut failed: {e}"))?;
+            if let Err(e) = shortcut::register_shortcut(app.handle(), &shortcut_str) {
+                eprintln!("[clipboardx] 快捷键注册失败（可在设置中更换）: {e}");
+            }
 
             // 清理历史遗留的孤儿图片文件（未被数据库引用的）
             {

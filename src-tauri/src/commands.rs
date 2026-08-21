@@ -1,7 +1,7 @@
 use crate::models::Settings;
-use serde::Serialize;
 use crate::settings::SettingsStore;
 use crate::store::Store;
+use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -38,11 +38,7 @@ pub fn list_entries(
 }
 
 #[tauri::command]
-pub fn set_pinned(
-    state: tauri::State<'_, AppState>,
-    id: i64,
-    pinned: bool,
-) -> Result<(), String> {
+pub fn set_pinned(state: tauri::State<'_, AppState>, id: i64, pinned: bool) -> Result<(), String> {
     state
         .store
         .lock()
@@ -167,7 +163,9 @@ pub fn get_storage_stats(state: tauri::State<'_, AppState>) -> Result<StorageSta
         .unwrap_or(0);
     let images_dir = data_dir.join("images");
     let images_size = dir_size(&images_dir);
-    let image_count = std::fs::read_dir(&images_dir).map(|rd| rd.count() as i64).unwrap_or(0);
+    let image_count = std::fs::read_dir(&images_dir)
+        .map(|rd| rd.count() as i64)
+        .unwrap_or(0);
     let entry_count = state
         .store
         .lock()
@@ -246,15 +244,27 @@ pub fn update_settings(
     state: tauri::State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
-    let old_shortcut = state.settings.lock().map_err(|e| e.to_string())?.settings.shortcut.clone();
+    let old_shortcut = state
+        .settings
+        .lock()
+        .map_err(|e| e.to_string())?
+        .settings
+        .shortcut
+        .clone();
+    let new_shortcut = settings.shortcut.clone();
+    // 先替换快捷键：新键注册成功后才注销旧键；失败则整体失败（设置不落盘、旧键保留）
+    if new_shortcut != old_shortcut {
+        crate::shortcut::replace_shortcut(&app, &new_shortcut, &old_shortcut)?;
+    }
     {
         let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
         guard.settings = settings;
-        guard.save().map_err(|e| e.to_string())?;
-    }
-    let new_shortcut = state.settings.lock().map_err(|e| e.to_string())?.settings.shortcut.clone();
-    if new_shortcut != old_shortcut {
-        crate::shortcut::register_shortcut(&app, &new_shortcut)?;
+        if let Err(e) = guard.save() {
+            // 设置写盘失败：把快捷键回滚到旧值，避免两侧状态不一致
+            let _ =
+                crate::shortcut::replace_shortcut(&app, &old_shortcut, &guard.settings.shortcut);
+            return Err(e.to_string());
+        }
     }
     Ok(())
 }
