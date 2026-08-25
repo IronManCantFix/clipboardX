@@ -156,8 +156,27 @@ All data stays local:
 ```
 ~/Library/Application Support/com.clipboardx.app/
 ├── entries.db      # history database
+├── clipboardx.log  # runtime log (for diagnosing unexpected exits)
 └── images/         # captured images (PNG)
 ```
+
+## Troubleshooting unexpected exits
+
+The app writes a file log. If it exits on its own, follow these steps:
+
+1. **Runtime log**: open
+   `~/Library/Application Support/com.clipboardx.app/clipboardx.log`.
+   It records startup, exit events (`ExitRequested` / `Exit`), window destruction,
+   listener restarts, a heartbeat every 10 minutes, and **panic locations with
+   backtraces**. A `PANIC at ...` line is the crash point.
+2. **macOS crash reports**: if the log ends with a heartbeat but no panic, the
+   process died natively (e.g. SIGSEGV, which bypasses the Rust panic hook). Check
+   the newest `ClipboardX-*.ips` file under `~/Library/Logs/DiagnosticReports/` —
+   the crash type shows the signal (e.g. `SIGSEGV` / `SIGABRT`).
+3. **Compare timelines**: match the last heartbeat/event timestamp in the log
+   against the crash time in the report to bracket when and how it died.
+
+> Dev builds log to `~/Library/Application Support/com.clipboardx.app.dev/clipboardx.log`.
 
 ## License
 

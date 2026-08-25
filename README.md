@@ -157,8 +157,25 @@ ClipboardX 通过模拟 `⌘V` 实现自动粘贴，需要 macOS 辅助功能权
 ```
 ~/Library/Application Support/com.clipboardx.app/
 ├── entries.db      # 历史记录数据库
+├── clipboardx.log  # 运行日志（排查自动退出问题）
 └── images/         # 捕获的图片（PNG）
 ```
+
+## 排查「应用自动退出」
+
+应用内置了文件日志，出现异常退出时按以下步骤排查：
+
+1. **运行日志**：打开 `~/Library/Application Support/com.clipboardx.app/clipboardx.log`。
+   日志记录启动、退出事件（`ExitRequested` / `Exit`）、窗口销毁、监听线程重启、
+   每 10 分钟一次心跳，以及 **panic 位置 + 回溯**。看到 `PANIC at ...` 即为崩溃点。
+2. **macOS 崩溃报告**：如果日志末尾是心跳（无 panic）却退出了，说明是原生崩溃
+   （SIGSEGV 等，不经过 Rust panic 钩子）。查看 `~/Library/Logs/DiagnosticReports/`
+   里最新的 `ClipboardX-*.ips` 文件，崩溃类型会写明信号（如 `SIGSEGV` / `SIGABRT`）。
+3. **对照时间线**：用日志里的最后一条心跳/事件时间，与崩溃报告的 crash 时间对照，
+   即可确定崩溃发生的时段与触发动作。
+
+> dev 版本日志在 `~/Library/Application Support/com.clipboardx.app.dev/clipboardx.log`，
+> 与正式版分开。
 
 ## 许可证
 

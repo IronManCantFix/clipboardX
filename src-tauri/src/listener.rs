@@ -94,6 +94,7 @@ pub fn cleanup_orphan_images(data_dir: &std::path::Path, store: &crate::store::S
     }
     if removed > 0 {
         println!("[clipboardx] cleaned up {removed} orphan image file(s)");
+        crate::logging::info(&format!("cleaned up {removed} orphan image file(s)"));
     }
 }
 
@@ -246,6 +247,7 @@ fn spawn_listener_worker(app: AppHandle) {
             }));
             if result.is_err() {
                 eprintln!("[clipboardx] listener iteration panicked (recovered)");
+                crate::logging::error("listener iteration panicked (recovered)");
             }
         }
     });
@@ -259,6 +261,7 @@ pub fn spawn_listener(app: AppHandle) {
         let last = LAST_HEARTBEAT.load(Ordering::Relaxed);
         if last > 0 && now_ms().saturating_sub(last) > 10_000 {
             println!("[clipboardx] listener heartbeat stale; restarting listener");
+            crate::logging::info("listener heartbeat stale; restarting listener");
             LAST_HEARTBEAT.store(now_ms(), Ordering::Relaxed);
             spawn_listener_worker(watchdog_app.clone());
         }

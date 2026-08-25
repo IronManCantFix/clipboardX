@@ -1,6 +1,7 @@
 mod clipboard;
 mod commands;
 mod listener;
+mod logging;
 mod models;
 mod paste;
 mod settings;
@@ -11,6 +12,8 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 尽早安装 panic 钩子：任何 panic（含后台线程）都会先写入日志再退出/恢复
+    logging::install_panic_hook();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
@@ -36,6 +39,15 @@ pub fn run() {
             }
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            // 日志文件：<app_data_dir>/clipboardx.log（macOS 上即
+            // ~/Library/Application Support/com.clipboardx.app/clipboardx.log）
+            logging::init(data_dir.join("clipboardx.log"));
+            logging::info(&format!(
+                "=== ClipboardX {} starting (pid={}, data_dir={}) ===",
+                env!("CARGO_PKG_VERSION"),
+                std::process::id(),
+                data_dir.display()
+            ));
             let store = store::Store::open(&data_dir.join("entries.db"))
                 .map_err(|e| format!("db open failed: {e}"))?;
             // 大库（如长期积累的富文本/长文本历史）在后台线程 VACUUM 一次，回收被 prune 释放的空间
@@ -79,9 +91,9 @@ pub fn run() {
 
             // 辅助功能权限检测（仅记录，不自动弹窗打扰用户；粘贴失败时前端会提示）
             if !shortcut::ax_is_trusted() {
-                println!(
-                    "[clipboardx] 辅助功能权限未授予：模拟粘贴不可用，请在系统设置中授权后重启应用"
-                );
+                let msg = "辅助功能权限未授予：模拟粘贴不可用，请在系统设置中授权后重启应用";
+                println!("[clipboardx] {msg}");
+                logging::info(msg);
             }
 
             // 全局快捷键：从设置读取（默认 Command+Shift+V），重启后保持用户自定义值。
@@ -96,6 +108,7 @@ pub fn run() {
                 .clone();
             if let Err(e) = shortcut::register_shortcut(app.handle(), &shortcut_str) {
                 eprintln!("[clipboardx] 快捷键注册失败（可在设置中更换）: {e}");
+                logging::error(&format!("shortcut register failed: {e}"));
             }
 
             // 清理历史遗留的孤儿图片文件（未被数据库引用的）
@@ -107,6 +120,14 @@ pub fn run() {
 
             // 启动剪贴板监听线程
             listener::spawn_listener(app.handle().clone());
+
+            // 心跳日志：每 10 分钟一条，用于确定「最后一次正常运行」的时间点，
+            // 配合退出/panic 日志即可定位崩溃发生的时段。
+            std::thread::spawn(|| loop {
+                std::thread::sleep(std::time::Duration::from_secs(600));
+                logging::info("heartbeat: app alive");
+            });
+            logging::info("setup completed; listener spawned");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -127,5 +148,28 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
-    app.run(|_, _| {});
+    // 生命周期日志：记录每一次退出请求与窗口销毁，区分「用户主动退出」与「意外退出」。
+    // ExitRequested code=None 表示用户交互触发（如最后窗口关闭/菜单退出），
+    // code=Some(n) 表示程序内调用（托盘退出 app.exit(0)、更新后 app.restart()）。
+    app.run(|_app, event| match event {
+        tauri::RunEvent::ExitRequested { code, .. } => {
+            logging::info(&format!("RunEvent::ExitRequested (code={code:?})"));
+        }
+        tauri::RunEvent::Exit => {
+            logging::info("RunEvent::Exit — app exiting");
+        }
+        tauri::RunEvent::WindowEvent { label, event, .. } => match event {
+            tauri::WindowEvent::CloseRequested { .. } => {
+                logging::info(&format!("window '{label}' close requested"));
+            }
+            tauri::WindowEvent::Destroyed => {
+                logging::info(&format!("window '{label}' destroyed"));
+            }
+            _ => {}
+        },
+        tauri::RunEvent::Reopen { .. } => {
+            logging::info("RunEvent::Reopen (macOS reopen)");
+        }
+        _ => {}
+    });
 }

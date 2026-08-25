@@ -35,9 +35,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [profile.release]
-# 减小安装包体积与内存占用（Tauri 官方推荐配置）
-panic = "abort"
+# 注意：不要用 panic="abort"。本应用在监听线程里用 catch_unwind 兜底，
+# abort 模式下任何线程 panic 都会直接干掉整个进程且不留日志（很可能就是
+# 「应用自动退出」的元凶）。unwind + debug=1：
+#  - 后台线程 panic 可被 catch_unwind 捕获，应用继续运行；
+#  - 未被捕获的 panic 先被全局钩子写入日志（含回溯）再退出。
+# debug=1 提供行号信息（配合 logging.rs 的 panic 回溯定位崩溃点）；去掉
+# strip，否则 release 二进制的回溯全是 <unknown> 无法定位。
+panic = "unwind"
 codegen-units = 1
 lto = "fat"
 opt-level = "z"
-strip = true
+debug = 1
