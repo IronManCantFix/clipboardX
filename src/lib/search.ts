@@ -4,9 +4,23 @@ export interface Searchable {
 
 export type SearchMode = 'fuzzy' | 'exact';
 
+// 内容小写缓存：长文本（大段代码、日志）每次按键重复 toLowerCase 开销可观，
+// 以原始字符串为 key 缓存结果；条目数 ≤100 且键值即内容本身， Map 容量上限兜底防膨胀。
+const lcCache = new Map<string, string>();
+const LC_CACHE_MAX = 1024;
+
+function cachedLower(s: string): string {
+  const hit = lcCache.get(s);
+  if (hit !== undefined) return hit;
+  const v = s.toLowerCase();
+  if (lcCache.size >= LC_CACHE_MAX) lcCache.clear();
+  lcCache.set(s, v);
+  return v;
+}
+
 /** 字符顺序模糊匹配（不要求连续）。 */
 export function fuzzyMatch(text: string, query: string): boolean {
-  const t = text.toLowerCase();
+  const t = cachedLower(text);
   const q = query.trim().toLowerCase();
   if (!q) return true;
   let from = 0;
@@ -26,7 +40,7 @@ export function filterEntries<T extends Searchable>(
   const q = query.trim().toLowerCase();
   if (!q) return items;
   return items.filter((i) => {
-    const t = i.content.toLowerCase();
+    const t = cachedLower(i.content);
     return mode === 'exact' ? t.includes(q) : fuzzyMatch(t, q);
   });
 }
@@ -42,7 +56,7 @@ export function escapeHtml(s: string): string {
 
 /** 模糊模式：在原始文本上按字符顺序定位每个命中字符，返回其下标集合。 */
 function fuzzyMatchPositions(text: string, query: string): Set<number> | null {
-  const t = text.toLowerCase();
+  const t = cachedLower(text);
   const q = query.trim().toLowerCase();
   if (!q) return null;
   let from = 0;
@@ -59,9 +73,8 @@ function fuzzyMatchPositions(text: string, query: string): Set<number> | null {
 export function highlight(text: string, query: string): string {
   const q = query.trim().toLowerCase();
   if (!q) return escapeHtml(text);
-  const t = text.toLowerCase();
   // 连续子串：直接高亮整段
-  const idx = t.indexOf(q);
+  const idx = cachedLower(text).indexOf(q);
   if (idx >= 0) {
     return (
       escapeHtml(text.slice(0, idx)) +

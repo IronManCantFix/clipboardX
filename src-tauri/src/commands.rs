@@ -1,8 +1,8 @@
-use crate::models::Settings;
+use crate::models::{now_ms, Entry, Settings};
 use crate::settings::SettingsStore;
 use crate::store::Store;
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use tauri::{Emitter, Manager};
 
 pub struct AppState {
@@ -11,17 +11,44 @@ pub struct AppState {
     pub data_dir: std::path::PathBuf,
 }
 
-fn now_ts() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+/// 锁中毒容错获取：监听线程已在用同样策略；Tauri 命令侧若用 `.lock().map_err(..)/
+/// unwrap()`，任何一次持锁 panic 之后所有前端操作都会永久失败——这里统一
+/// 取回被毒化的内部值继续使用。
+pub fn lock_store(state: &AppState) -> MutexGuard<'_, Store> {
+    state.store.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub fn lock_settings(state: &AppState) -> MutexGuard<'_, SettingsStore> {
+    state.settings.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 把库内存储的图片路径解析为绝对路径。
+/// 新版数据存相对 data_dir 的相对路径（如 "images/123.png"，见 Entry::image_path），
+/// 旧版数据是绝对路径——绝对路径原样返回保持兼容。
+pub fn resolve_image_path(data_dir: &std::path::Path, stored: &str) -> String {
+    let p = std::path::Path::new(stored);
+    if p.is_absolute() {
+        stored.to_string()
+    } else {
+        data_dir.join(p).to_string_lossy().into_owned()
+    }
+}
+
+/// 把条目里的图片字段统一换成可用于读盘 / asset 协议的绝对路径。
+fn resolve_entry_image_paths(e: &mut Entry, data_dir: &std::path::Path) {
+    if let Some(p) = &e.image_path {
+        e.image_path = Some(resolve_image_path(data_dir, p));
+    }
+    if let Some(p) = &e.thumb_path {
+        e.thumb_path = Some(resolve_image_path(data_dir, p));
+    }
 }
 
 /// 删除图片条目时同步清理磁盘上的原图与缩略图。
-pub fn remove_image_file(e: &crate::models::Entry) {
-    for p in [&e.image_path, &e.thumb_path].into_iter().flatten() {
-        let _ = std::fs::remove_file(p);
+/// 库内可能存相对或绝对路径（历史版本差异），删除前先归一化解析。
+pub fn remove_image_file(e: &Entry, data_dir: &std::path::Path) {
+    for stored in [&e.image_path, &e.thumb_path].into_iter().flatten() {
+        let _ = std::fs::remove_file(resolve_image_path(data_dir, stored));
     }
 }
 
@@ -29,20 +56,24 @@ pub fn remove_image_file(e: &crate::models::Entry) {
 pub fn list_entries(
     state: tauri::State<'_, AppState>,
     tab: Option<String>,
-) -> Result<Vec<crate::models::Entry>, String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    match tab.as_deref() {
-        Some("pinned") => store.list_pinned().map_err(|e| e.to_string()),
-        _ => store.list().map_err(|e| e.to_string()),
+) -> Result<Vec<Entry>, String> {
+    let data_dir = state.data_dir.clone();
+    let mut entries = {
+        let store = lock_store(&state);
+        match tab.as_deref() {
+            Some("pinned") => store.list_pinned().map_err(|e| e.to_string())?,
+            _ => store.list().map_err(|e| e.to_string())?,
+        }
+    };
+    for e in entries.iter_mut() {
+        resolve_entry_image_paths(e, &data_dir);
     }
+    Ok(entries)
 }
 
 #[tauri::command]
 pub fn set_pinned(state: tauri::State<'_, AppState>, id: i64, pinned: bool) -> Result<(), String> {
-    state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
+    lock_store(&state)
         .set_pinned(id, pinned)
         .map_err(|e| e.to_string())
 }
@@ -50,17 +81,14 @@ pub fn set_pinned(state: tauri::State<'_, AppState>, id: i64, pinned: bool) -> R
 #[tauri::command]
 pub fn delete_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<(), String> {
     let entry = {
-        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let store = lock_store(&state);
         store.get(id).map_err(|e| e.to_string())?
     };
     if let Some(e) = entry {
-        state
-            .store
-            .lock()
-            .map_err(|e| e.to_string())?
+        lock_store(&state)
             .delete(id)
             .map_err(|e| e.to_string())?;
-        remove_image_file(&e);
+        remove_image_file(&e, &state.data_dir);
     }
     Ok(())
 }
@@ -71,21 +99,18 @@ pub fn paste_entry(
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<(), String> {
-    let e = state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .get(id)
-        .map_err(|e| e.to_string())?
-        .ok_or("entry not found")?;
+    let mut e = {
+        let store = lock_store(&state);
+        store
+            .get(id)
+            .map_err(|e| e.to_string())?
+            .ok_or("entry not found")?
+    };
+    // 图片条目写回前把相对路径解析成绝对路径再读文件
+    resolve_entry_image_paths(&mut e, &state.data_dir);
     crate::paste::write_back(&e)?;
-    let now = now_ts();
-    state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .touch(id, now)
-        .map_err(|e| e.to_string())?;
+    let now = now_ms();
+    lock_store(&state).touch(id, now).map_err(|e| e.to_string())?;
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
     }
@@ -166,10 +191,7 @@ pub fn get_storage_stats(state: tauri::State<'_, AppState>) -> Result<StorageSta
     let image_count = std::fs::read_dir(&images_dir)
         .map(|rd| rd.count() as i64)
         .unwrap_or(0);
-    let entry_count = state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
+    let entry_count = lock_store(&state)
         .count()
         .map_err(|e| e.to_string())?;
     Ok(StorageStats {
@@ -185,27 +207,24 @@ pub fn get_storage_stats(state: tauri::State<'_, AppState>) -> Result<StorageSta
 pub fn clear_images(state: tauri::State<'_, AppState>) -> Result<(), String> {
     // 仅删除非固定图片条目，固定图片保留（与「固定项永不被清理」的承诺一致）
     let victims = {
-        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let store = lock_store(&state);
         store
             .delete_images_non_pinned()
             .map_err(|e| e.to_string())?
     };
     for e in &victims {
-        remove_image_file(e);
+        remove_image_file(e, &state.data_dir);
     }
     // 清理磁盘上未被任何条目引用的孤儿图片文件（固定条目引用的文件保留）
     let data_dir = state.data_dir.clone();
-    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let store = lock_store(&state);
     crate::listener::cleanup_orphan_images(&data_dir, &store);
     Ok(())
 }
 
 #[tauri::command]
 pub fn clear_history(state: tauri::State<'_, AppState>) -> Result<usize, String> {
-    state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
+    lock_store(&state)
         .delete_non_pinned()
         .map(|entries| entries.len())
         .map_err(|e| e.to_string())
@@ -230,12 +249,7 @@ pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String>
 
 #[tauri::command]
 pub fn get_settings(state: tauri::State<'_, AppState>) -> Result<Settings, String> {
-    Ok(state
-        .settings
-        .lock()
-        .map_err(|e| e.to_string())?
-        .settings
-        .clone())
+    Ok(lock_settings(&state).settings.clone())
 }
 
 #[tauri::command]
@@ -244,27 +258,31 @@ pub fn update_settings(
     state: tauri::State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
-    let old_shortcut = state
-        .settings
-        .lock()
-        .map_err(|e| e.to_string())?
-        .settings
-        .shortcut
-        .clone();
+    // 先取旧设置的完整快照：快捷键注册失败会提前返回；保存失败时内存也要整体
+    // 回滚到快照——否则「磁盘旧值 / 内存新值」的幽灵状态会让后续 get_settings
+    // 一直拿到从未成功落盘的配置。
+    let old = lock_settings(&state).settings.clone();
     let new_shortcut = settings.shortcut.clone();
-    // 先替换快捷键：新键注册成功后才注销旧键；失败则整体失败（设置不落盘、旧键保留）
-    if new_shortcut != old_shortcut {
-        crate::shortcut::replace_shortcut(&app, &new_shortcut, &old_shortcut)?;
+    let mut swapped = false;
+    if new_shortcut != old.shortcut {
+        // 先替换快捷键：新键注册成功后才注销旧键；失败则整体失败（设置不落盘、旧键保留）
+        crate::shortcut::replace_shortcut(&app, &new_shortcut, &old.shortcut)?;
+        swapped = true;
     }
-    {
-        let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+    let save_result = {
+        let mut guard = lock_settings(&state);
         guard.settings = settings;
-        if let Err(e) = guard.save() {
-            // 设置写盘失败：把快捷键回滚到旧值，避免两侧状态不一致
-            let _ =
-                crate::shortcut::replace_shortcut(&app, &old_shortcut, &guard.settings.shortcut);
-            return Err(e.to_string());
+        guard.save()
+    };
+    if let Err(e) = save_result {
+        let restored = old;
+        if swapped {
+            // 快捷键回滚：重新注册旧键并注销刚注册的新键
+            let target = restored.shortcut.clone();
+            let _ = crate::shortcut::replace_shortcut(&app, &target, &new_shortcut);
         }
+        lock_settings(&state).settings = restored;
+        return Err(e.to_string());
     }
     Ok(())
 }
@@ -321,4 +339,45 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     // 安装完成，重启使新版本生效（restart 不返回，会直接退出当前进程）
     app.restart()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_image_path_handles_relative_and_absolute() {
+        let dir = std::path::Path::new("/tmp/cbx-test");
+        assert_eq!(
+            resolve_image_path(dir, "images/7.png"),
+            "/tmp/cbx-test/images/7.png"
+        );
+        let legacy = format!("{}/images/8.png", dir.display());
+        assert_eq!(resolve_image_path(dir, &legacy), legacy);
+    }
+
+    #[test]
+    fn resolve_entry_fields_in_place() {
+        let dir = std::path::Path::new("/tmp/cbx-test2");
+        let mut e = Entry {
+            id: 1,
+            kind: crate::models::EntryType::Image,
+            content: "[图片]".into(),
+            content_hash: None,
+            rtf_data: None,
+            image_path: Some("images/a.png".into()),
+            thumb_path: Some("images/a_thumb.png".into()),
+            file_paths: vec![],
+            source_app: None,
+            pinned: false,
+            created_at: 1,
+            last_used_at: 1,
+        };
+        resolve_entry_image_paths(&mut e, dir);
+        assert_eq!(e.image_path.as_deref(), Some("/tmp/cbx-test2/images/a.png"));
+        assert_eq!(
+            e.thumb_path.as_deref(),
+            Some("/tmp/cbx-test2/images/a_thumb.png")
+        );
+    }
 }

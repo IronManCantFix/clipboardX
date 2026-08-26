@@ -3,6 +3,7 @@
   import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
   import { api, onNewEntry, type Entry, type Settings } from '../lib/api';
   import { filterEntries } from '../lib/search';
+  import { t } from '../lib/i18n';
   import TabBar from '../components/TabBar.svelte';
   import EntryRow from '../components/EntryRow.svelte';
 
@@ -33,15 +34,26 @@
   const MAX_LIST_H = 15 * ROW_H;
   const AUTO_W = 360;
 
+  function applyFilter(list: Entry[]): Entry[] {
+    return settings.search_enabled ? filterEntries(list, query, settings.search_mode) : list;
+  }
+
   let pinnedCount = $derived(entries.filter((e) => e.pinned).length);
 
-  let visibleEntries = $derived(
-    settings.search_enabled ? filterEntries(entries, query, settings.search_mode) : entries,
-  );
+  let visibleEntries = $derived(applyFilter(entries));
 
   async function refresh() {
-    entries = await api.list(tab === 'pinned' ? 'pinned' : undefined);
-    selected = 0;
+    const next = await api.list(tab === 'pinned' ? 'pinned' : undefined);
+    // 新条目到达时尽量保持当前选中项（按 id 而非固定归零），避免浏览中被打断
+    const prevId = visibleEntries[selected]?.id ?? null;
+    entries = next;
+    const filtered = applyFilter(next);
+    if (prevId !== null) {
+      const idx = filtered.findIndex((e) => e.id === prevId);
+      selected = idx >= 0 ? idx : 0;
+    } else {
+      selected = Math.min(selected, Math.max(0, filtered.length - 1));
+    }
   }
 
   async function switchTab(t: 'all' | 'pinned') {
@@ -98,6 +110,19 @@
     settings.window_height;
     settings.image_preview_height;
     applyHeight();
+  });
+
+  // 键盘导航的滚动跟随：选中项超出可视区时滚入视野。
+  // block:'nearest' 保证鼠标 hover 改变选中时不会产生多余滚动（元素已可见即原样）。
+  $effect(() => {
+    void selected;
+    void visibleEntries.length;
+    const raf = requestAnimationFrame(() => {
+      document
+        .querySelectorAll<HTMLElement>('.row')
+        [selected]?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(raf);
   });
 
   // 固定项被清空时回到「全部」Tab，避免停留在空的固定列表
@@ -186,7 +211,8 @@
 <div class="pop">
   {#if settings.search_enabled}
     <div class="search">
-      <input bind:this={searchInput} bind:value={query} placeholder="搜索剪贴板…" />
+      <input bind:this={searchInput} bind:value={query} placeholder={t('ph_search')}
+             aria-label={t('ph_search')} />
     </div>
   {/if}
   {#if pinnedCount > 0}
@@ -201,8 +227,8 @@
           <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/>
           <path d="M9 12h6M9 16h4"/>
         </svg>
-        <p>{query ? '无匹配结果' : '暂无剪贴板记录'}</p>
-        {#if !query}<span>复制任何内容都会自动出现在这里</span>{/if}
+        <p>{query ? t('empty_no_match') : t('empty_history')}</p>
+        {#if !query}<span>{t('empty_hint')}</span>{/if}
       </div>
     {:else}
       {#each visibleEntries as entry, i (entry.id)}
@@ -218,8 +244,8 @@
     {/if}
   </div>
   <div class="foot">
-    <span><kbd>↑↓</kbd> 选择 · <kbd>⏎</kbd> 粘贴</span>
-    <span><kbd>⌘P</kbd> 固定 · <kbd>⌫</kbd> 删除 · <kbd>Esc</kbd> 关闭</span>
+    <span><kbd>↑↓</kbd> {t('act_select')} · <kbd>⏎</kbd> {t('act_paste')}</span>
+    <span><kbd>⌘P</kbd> {t('act_pin')} · <kbd>⌫</kbd> {t('act_delete')} · <kbd>Esc</kbd> {t('act_close')}</span>
   </div>
 </div>
 

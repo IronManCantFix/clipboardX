@@ -98,11 +98,7 @@ pub fn run() {
 
             // 全局快捷键：从设置读取（默认 Command+Shift+V），重启后保持用户自定义值。
             // 注册失败（如与其它应用冲突）不阻断启动：记录日志，用户可在设置中更换。
-            let shortcut_str = app
-                .state::<crate::commands::AppState>()
-                .settings
-                .lock()
-                .unwrap()
+            let shortcut_str = commands::lock_settings(&app.state::<crate::commands::AppState>())
                 .settings
                 .shortcut
                 .clone();
@@ -114,7 +110,7 @@ pub fn run() {
             // 清理历史遗留的孤儿图片文件（未被数据库引用的）
             {
                 let app_state = app.state::<crate::commands::AppState>();
-                let store = app_state.store.lock().unwrap();
+                let store = commands::lock_store(&app_state);
                 listener::cleanup_orphan_images(&data_dir, &store);
             }
 

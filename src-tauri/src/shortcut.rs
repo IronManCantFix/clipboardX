@@ -1,6 +1,8 @@
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplicationActivationOptions, NSApplicationActivationPolicy};
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use crate::commands::lock_settings;
+use crate::models::{now_ms, PositionMode};
+use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, LogicalPosition, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
@@ -78,14 +80,7 @@ static LAST_FRONT_APP_PID: AtomicI32 = AtomicI32::new(0);
 static LAST_CURSOR: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 
 /// 最近一次主动唤起弹窗的时间（毫秒），用于聚焦保护期判断。
-static LAST_SHOWN_AT: AtomicU64 = AtomicU64::new(0);
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
+static LAST_SHOWN_AT: AtomicI64 = AtomicI64::new(0);
 
 /// 记录主动唤起时间；此后短暂时间内即使窗口未获得焦点也不应隐藏。
 pub fn mark_shown() {
@@ -154,19 +149,15 @@ pub fn cursor_global() -> Option<(f64, f64)> {
 pub fn show_popover(app: &AppHandle) {
     remember_front_app();
     activate_app();
-    let mode = app
-        .state::<crate::commands::AppState>()
+    // 设置锁可能被毒化（极低概率），弹窗唤起不容失败：统一走容错取锁
+    let mode = lock_settings(&app.state::<crate::commands::AppState>())
         .settings
-        .lock()
-        .unwrap()
-        .settings
-        .position_mode
-        .clone();
+        .position_mode;
     if let Some(cursor) = cursor_global() {
         *LAST_CURSOR.lock().unwrap_or_else(|p| p.into_inner()) = Some(cursor);
     }
     if let Some(win) = app.get_webview_window("main") {
-        if mode == "center" {
+        if mode == PositionMode::Center {
             let _ = win.center();
         } else {
             let _ = position_window(&win);
@@ -244,15 +235,10 @@ fn position_window(win: &tauri::WebviewWindow) -> Result<(), String> {
 /// 弹窗尺寸变化后重新定位（前端在 setSize 后调用）。居中模式不移动。
 #[tauri::command]
 pub fn position_popover(app: tauri::AppHandle) -> Result<(), String> {
-    let mode = app
-        .state::<crate::commands::AppState>()
+    let mode = lock_settings(&app.state::<crate::commands::AppState>())
         .settings
-        .lock()
-        .unwrap()
-        .settings
-        .position_mode
-        .clone();
-    if mode != "cursor" {
+        .position_mode;
+    if mode != PositionMode::Cursor {
         return Ok(());
     }
     if let Some(win) = app.get_webview_window("main") {

@@ -31,6 +31,9 @@ export interface Settings {
   image_preview_height: number;
 }
 
+/** 设置子组件统一使用的变更回调（父组件内做防抖保存）。 */
+export type SettingSetter = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+
 export interface UpdateInfo {
   current_version: string;
   latest_version: string | null;

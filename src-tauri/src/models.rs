@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+/// 当前 Unix 毫秒时间戳。条目排序/去重统一使用毫秒，避免同一秒内多条记录顺序不稳定。
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EntryType {
@@ -24,17 +32,82 @@ impl EntryType {
     }
 }
 
+/// 窗口尺寸模式："auto"（默认/自适应）| "custom"（用户指定）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SizeMode {
+    #[default]
+    Auto,
+    Custom,
+}
+
+/// 搜索模式：模糊（按字符顺序）或精准子串。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchMode {
+    #[default]
+    Fuzzy,
+    Exact,
+}
+
+/// 弹窗出现位置：跟随鼠标或屏幕居中。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PositionMode {
+    #[default]
+    Cursor,
+    Center,
+}
+
+// ---- 宽松反序列化：旧配置文件里这些字段是裸字符串，遇到非法值时回退默认，
+//      而不是让整个 settings.json 解析失败导致启动报错 ----
+
+fn lenient_size_mode<'de, D>(d: D) -> Result<SizeMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(d)?;
+    Ok(match raw.as_str() {
+        "custom" => SizeMode::Custom,
+        _ => SizeMode::Auto,
+    })
+}
+
+fn lenient_search_mode<'de, D>(d: D) -> Result<SearchMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(d)?;
+    Ok(match raw.as_str() {
+        "exact" => SearchMode::Exact,
+        _ => SearchMode::Fuzzy,
+    })
+}
+
+fn lenient_position_mode<'de, D>(d: D) -> Result<PositionMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(d)?;
+    Ok(match raw.as_str() {
+        "center" => PositionMode::Center,
+        _ => PositionMode::Cursor,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
     pub id: i64,
     #[serde(rename = "type")]
     pub kind: EntryType,
     pub content: String,
-    /// 图片内容 hash（TIFF 内容 hash），用于图片去重；非图片为 None
+    /// 内容 hash：图片为 TIFF/PNG 字节哈希、RTF 为 RTF 数据哈希；其余类型 None
     #[serde(default)]
     pub content_hash: Option<i64>,
     pub rtf_data: Option<Vec<u8>>,
+    /// 图片原图路径（相对 data_dir 存储，如 "images/{hash}.png"；旧版数据可能为绝对路径）
     pub image_path: Option<String>,
+    /// 缩略图路径（同上）
     pub thumb_path: Option<String>,
     pub file_paths: Vec<String>,
     pub source_app: Option<String>,
@@ -46,17 +119,11 @@ pub struct Entry {
 fn default_opacity() -> f64 {
     0.9
 }
-fn default_width_mode() -> String {
-    "auto".into()
+fn default_image_preview_height() -> i64 {
+    60
 }
-fn default_height_mode() -> String {
-    "auto".into()
-}
-fn default_position_mode() -> String {
-    "cursor".into()
-}
-fn default_search_mode() -> String {
-    "fuzzy".into()
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,12 +133,12 @@ pub struct Settings {
     /// 弹窗背景透明度 0.3..=1.0
     #[serde(default = "default_opacity")]
     pub opacity: f64,
-    /// 宽度模式："auto"（默认宽度）| "custom"（指定宽度）
-    #[serde(default = "default_width_mode")]
-    pub width_mode: String,
-    /// 高度模式："auto"（按条数自适应）| "custom"（指定高度）
-    #[serde(default = "default_height_mode")]
-    pub height_mode: String,
+    /// 宽度模式
+    #[serde(default, deserialize_with = "lenient_size_mode")]
+    pub width_mode: SizeMode,
+    /// 高度模式
+    #[serde(default, deserialize_with = "lenient_size_mode")]
+    pub height_mode: SizeMode,
     #[serde(default = "default_window_width")]
     pub window_width: i64,
     #[serde(default = "default_window_height")]
@@ -79,12 +146,12 @@ pub struct Settings {
     /// 是否启用搜索框
     #[serde(default = "default_true")]
     pub search_enabled: bool,
-    /// 搜索模式："fuzzy"（模糊）| "exact"（精准子串）
-    #[serde(default = "default_search_mode")]
-    pub search_mode: String,
-    /// 弹窗位置："cursor"（跟随鼠标）| "center"（屏幕居中）
-    #[serde(default = "default_position_mode")]
-    pub position_mode: String,
+    /// 搜索模式
+    #[serde(default, deserialize_with = "lenient_search_mode")]
+    pub search_mode: SearchMode,
+    /// 弹窗位置
+    #[serde(default, deserialize_with = "lenient_position_mode")]
+    pub position_mode: PositionMode,
     /// 图片条目缩略图高度（px）
     #[serde(default = "default_image_preview_height")]
     pub image_preview_height: i64,
@@ -96,12 +163,6 @@ fn default_window_width() -> i64 {
 fn default_window_height() -> i64 {
     480
 }
-fn default_image_preview_height() -> i64 {
-    60
-}
-fn default_true() -> bool {
-    true
-}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -109,14 +170,57 @@ impl Default for Settings {
             history_limit: 15,
             shortcut: "Command+Shift+V".into(),
             opacity: 0.9,
-            width_mode: "auto".into(),
-            height_mode: "auto".into(),
+            width_mode: SizeMode::Auto,
+            height_mode: SizeMode::Auto,
             window_width: 360,
             window_height: 480,
             search_enabled: true,
-            search_mode: "fuzzy".into(),
-            position_mode: "cursor".into(),
+            search_mode: SearchMode::Fuzzy,
+            position_mode: PositionMode::Cursor,
             image_preview_height: 60,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_string_modes_still_parse() {
+        let json = r#"{"history_limit":15,"shortcut":"Command+Shift+V","width_mode":"custom","height_mode":"auto","search_mode":"exact","position_mode":"center"}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.width_mode, SizeMode::Custom);
+        assert_eq!(s.height_mode, SizeMode::Auto);
+        assert_eq!(s.search_mode, SearchMode::Exact);
+        assert_eq!(s.position_mode, PositionMode::Center);
+    }
+
+    #[test]
+    fn invalid_mode_falls_back_instead_of_failing() {
+        let json = r#"{"history_limit":15,"shortcut":"Command+Shift+V","width_mode":"bogus","position_mode":"nope"}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.width_mode, SizeMode::Auto);
+        assert_eq!(s.position_mode, PositionMode::Cursor);
+    }
+
+    #[test]
+    fn settings_roundtrip_serializes_enums_as_lowercase() {
+        let mut s = Settings::default();
+        s.width_mode = SizeMode::Custom;
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["width_mode"], "custom");
+        let back: Settings = serde_json::from_value(v).unwrap();
+        assert_eq!(back.width_mode, SizeMode::Custom);
+    }
+
+    #[test]
+    fn missing_optional_fields_use_defaults() {
+        let json = r#"{"history_limit":5,"shortcut":"X"}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.opacity, 0.9);
+        assert!(s.search_enabled);
+        assert_eq!(s.search_mode, SearchMode::Fuzzy);
+        assert_eq!(s.image_preview_height, 60);
     }
 }

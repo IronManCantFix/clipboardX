@@ -1,21 +1,26 @@
-use crate::clipboard::{write_files, write_image_png, write_rtf, write_text};
+use crate::clipboard::{write_files, write_image_png, write_rtf_with_text, write_text};
 use crate::models::{Entry, EntryType};
 
 #[derive(Debug, PartialEq)]
 pub enum Payload {
     Text(String),
-    Rtf(Vec<u8>),
+    /// RTF 数据 + 纯文本回退：目标应用只认 String 时也有内容可粘
+    Rtf(Vec<u8>, String),
     Files(Vec<String>),
     Image(String),
 }
 
-/// 将条目转成可写回剪贴板的负载。RTF 恢复为富文本数据。
+/// 将条目转成可写回剪贴板的负载。RTF 恢复为富文本数据并附纯文本。
 pub fn write_payload(e: &Entry) -> Payload {
     match e.kind {
         EntryType::Text | EntryType::Url => Payload::Text(e.content.clone()),
         EntryType::File => Payload::Files(e.file_paths.clone()),
         EntryType::Image => Payload::Image(e.image_path.clone().unwrap_or_default()),
-        EntryType::Rtf => Payload::Rtf(e.rtf_data.clone().unwrap_or_default()),
+        // 旧库记录 content 固定为「[富文本]」占位，此时不把它当真实文本写回
+        EntryType::Rtf => Payload::Rtf(
+            e.rtf_data.clone().unwrap_or_default(),
+            e.content.clone(),
+        ),
     }
 }
 
@@ -25,8 +30,9 @@ pub fn write_back(e: &Entry) -> Result<(), String> {
             write_text(&s);
             Ok(())
         }
-        Payload::Rtf(data) => {
-            write_rtf(&data);
+        Payload::Rtf(data, text) => {
+            let plain = if text == "[富文本]" { "" } else { text.as_str() };
+            write_rtf_with_text(&data, plain);
             Ok(())
         }
         Payload::Files(v) => {
@@ -164,12 +170,26 @@ mod tests {
     }
 
     #[test]
-    fn payload_for_rtf_uses_rtf_data() {
-        let mut e = entry(EntryType::Rtf, "[富文本]");
+    fn payload_for_rtf_carries_plain_text_fallback() {
+        let mut e = entry(EntryType::Rtf, "实际正文");
         e.rtf_data = Some(vec![0x7b, 0x5c, 0x72, 0x74, 0x66]);
         assert_eq!(
             write_payload(&e),
-            Payload::Rtf(vec![0x7b, 0x5c, 0x72, 0x74, 0x66])
+            Payload::Rtf(vec![0x7b, 0x5c, 0x72, 0x74, 0x66], "实际正文".into())
         );
+    }
+
+    #[test]
+    fn payload_for_legacy_rtf_placeholder_content() {
+        // 旧版库记录 content 为占位文案；写回时不把占位当正文
+        let mut e = entry(EntryType::Rtf, "[富文本]");
+        e.rtf_data = Some(vec![1, 2]);
+        match write_payload(&e) {
+            Payload::Rtf(data, text) => {
+                assert_eq!(data, vec![1, 2]);
+                assert_eq!(text, "[富文本]");
+            }
+            other => panic!("expected Rtf payload, got {other:?}"),
+        }
     }
 }

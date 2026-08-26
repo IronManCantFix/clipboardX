@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from '../lib/i18n';
+
   let {
     tab,
     pinnedCount,
@@ -11,9 +13,9 @@
 </script>
 
 <div class="tabs">
-  <button class:active={tab === 'all'} onclick={() => onswitch('all')}>剪贴板</button>
+  <button class:active={tab === 'all'} onclick={() => onswitch('all')}>{t('tab_all')}</button>
   {#if pinnedCount > 0}
-    <button class:active={tab === 'pinned'} onclick={() => onswitch('pinned')}>固定</button>
+    <button class:active={tab === 'pinned'} onclick={() => onswitch('pinned')}>{t('tab_pinned')}</button>
   {/if}
 </div>
 

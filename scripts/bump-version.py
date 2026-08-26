@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""将 tag 版本号写入 Cargo.toml 与 tauri.conf.json（CI 打标签发布时自动注入）。
+"""将 tag 版本号写入 Cargo.toml、tauri.conf.json 与 package.json（CI 打标签发布时自动注入）。
 
 用法：bump-version.py <tag>          # 例如 v0.1.19
 
 - 校验 tag 为 vX.Y.Z 格式（支持 pre-release / build 元数据，如 v0.1.19-beta.1）
-- 把 version 同步写入两个文件（Tauri 要求两者一致，缺一会构建失败）：
+- 把 version 同步写入三个文件（三处保持一致，避免版本号漂移）：
     src-tauri/Cargo.toml       version = "x.y.z"
     src-tauri/tauri.conf.json  "version": "x.y.z"
+    package.json               "version": "x.y.z"
 
 本地开发不需要运行此脚本；CI 在打 v* 标签时自动注入。
 """
@@ -48,7 +49,22 @@ def main() -> None:
         json.dump(conf, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
-    print(f"version -> {version} (Cargo.toml + tauri.conf.json)")
+    # 3) package.json（仅替换顶层 version 字段，避免误改依赖）
+    pkg_path = "package.json"
+    with open(pkg_path, encoding="utf-8") as f:
+        raw = f.read()
+    new_raw, n = re.subn(
+        r'(?m)^(\s*"version"\s*:\s*)"[^"]+"',
+        rf'\g<1>"{version}"',
+        raw,
+        count=1,
+    )
+    if n != 1:
+        sys.exit(f"could not find top-level version field in {pkg_path}")
+    with open(pkg_path, "w", encoding="utf-8") as f:
+        f.write(new_raw)
+
+    print(f"version -> {version} (Cargo.toml + tauri.conf.json + package.json)")
 
 
 if __name__ == "__main__":

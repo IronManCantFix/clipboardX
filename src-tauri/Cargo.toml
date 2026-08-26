@@ -29,7 +29,7 @@ anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSEvent", "NSWorkspace"] }
-objc2-foundation = { version = "0.3" }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSObject", "NSString", "NSURL"] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

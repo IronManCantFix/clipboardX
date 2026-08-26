@@ -45,18 +45,8 @@ impl SettingsStore {
         self.settings.window_width = self.settings.window_width.clamp(220, 800);
         self.settings.window_height = self.settings.window_height.clamp(200, 1200);
         self.settings.image_preview_height = self.settings.image_preview_height.clamp(24, 200);
-        if !matches!(self.settings.width_mode.as_str(), "auto" | "custom") {
-            self.settings.width_mode = "auto".into();
-        }
-        if !matches!(self.settings.height_mode.as_str(), "auto" | "custom") {
-            self.settings.height_mode = "auto".into();
-        }
-        if !matches!(self.settings.search_mode.as_str(), "fuzzy" | "exact") {
-            self.settings.search_mode = "fuzzy".into();
-        }
-        if !matches!(self.settings.position_mode.as_str(), "cursor" | "center") {
-            self.settings.position_mode = "cursor".into();
-        }
+        // width_mode/height_mode/search_mode/position_mode 已改为强类型枚举，
+        // 非法值在反序列化阶段即回退默认（见 models.rs 的 lenient_* 反序列化）。
     }
 
     pub fn save(&mut self) -> anyhow::Result<()> {
@@ -136,8 +126,8 @@ mod tests {
         )
         .unwrap();
         let s = SettingsStore::load(&path).unwrap();
-        assert_eq!(s.settings.width_mode, "custom");
-        assert_eq!(s.settings.height_mode, "custom");
+        assert_eq!(s.settings.width_mode, crate::models::SizeMode::Custom);
+        assert_eq!(s.settings.height_mode, crate::models::SizeMode::Custom);
         assert_eq!(s.settings.window_width, 500);
         assert_eq!(s.settings.window_height, 700);
     }
