@@ -1,6 +1,6 @@
 [package]
 name = "clipboardx"
-version = "0.2.3"
+version = "0.2.6"
 description = "A Tauri App"
 authors = ["ClipboardX Contributors"]
 edition = "2021"
