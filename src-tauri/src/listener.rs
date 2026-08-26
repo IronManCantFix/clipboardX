@@ -55,7 +55,7 @@ use crate::models::EntryType;
 use crate::settings::SettingsStore;
 use crate::store::{NewEntry, Store};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::MutexGuard;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -234,8 +234,35 @@ fn listener_iteration(
     commit_entry(app, new_entry);
 }
 
+/// 监听线程是否已在运行。
+///
+/// 看门狗发现心跳停滞时会尝试「重启」监听线程——但心跳停滞最常见的真实原因是
+/// 旧线程仍然活着、只是阻塞在剪贴板读取上（如系统休眠唤醒后 pasteboard 服务
+/// 忙碌、其它应用长时间占用剪贴板）。此时绝不能重复启动新线程：两个线程并发
+/// 访问 `NSPasteboard::generalPasteboard` 会竞争其内部类型缓存，直接 SIGSEGV
+/// 崩溃（详见 clipboard.rs 中 PASTEBOARD_LOCK 的注释）。只有旧线程确实退出后
+/// （本标记回到 false）才允许重新启动。
+static WORKER_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 fn spawn_listener_worker(app: AppHandle) {
+    // swap 保证即使看门狗与其它路径同时尝试启动，也只会有一个线程胜出
+    if WORKER_ACTIVE.swap(true, Ordering::SeqCst) {
+        println!("[clipboardx] listener worker already running; skip duplicate spawn");
+        crate::logging::error(
+            "listener worker already running; duplicate spawn skipped (old worker may be stuck in pasteboard read)",
+        );
+        return;
+    }
     std::thread::spawn(move || {
+        // 任何退出路径（包括初始化阶段 panic）都要释放「运行中」标记，
+        // 否则看门狗将永远无法恢复监听
+        struct ClearActive;
+        impl Drop for ClearActive {
+            fn drop(&mut self) {
+                WORKER_ACTIVE.store(false, Ordering::SeqCst);
+            }
+        }
+        let _clear_on_exit = ClearActive;
         let mut last_count = change_count();
         let mut last_detected: Option<Detected> = None;
         loop {
@@ -253,7 +280,8 @@ fn spawn_listener_worker(app: AppHandle) {
     });
 }
 
-/// 启动剪贴板监听：工作线程 + 看门狗（心跳停滞超过 10s 自动重启工作线程）。
+/// 启动剪贴板监听：工作线程 + 看门狗（心跳停滞超过 10s 尝试重启；若原线程仍存活
+/// 则跳过，见 spawn_listener_worker 的 WORKER_ACTIVE 守卫）。
 pub fn spawn_listener(app: AppHandle) {
     let watchdog_app = app.clone();
     std::thread::spawn(move || loop {
@@ -261,7 +289,7 @@ pub fn spawn_listener(app: AppHandle) {
         let last = LAST_HEARTBEAT.load(Ordering::Relaxed);
         if last > 0 && now_ms().saturating_sub(last) > 10_000 {
             println!("[clipboardx] listener heartbeat stale; restarting listener");
-            crate::logging::info("listener heartbeat stale; restarting listener");
+            crate::logging::info("listener heartbeat stale; trying to restart listener");
             LAST_HEARTBEAT.store(now_ms(), Ordering::Relaxed);
             spawn_listener_worker(watchdog_app.clone());
         }
