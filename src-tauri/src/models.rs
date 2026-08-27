@@ -119,6 +119,10 @@ pub struct Entry {
 fn default_opacity() -> f64 {
     0.9
 }
+/// 液态玻璃强度默认值：0.7（比中线略强，突出磨砂/提活效果）
+fn default_glass_strength() -> f64 {
+    0.7
+}
 fn default_image_preview_height() -> i64 {
     60
 }
@@ -133,6 +137,9 @@ pub struct Settings {
     /// 弹窗背景透明度 0.3..=1.0
     #[serde(default = "default_opacity")]
     pub opacity: f64,
+    /// 液态玻璃强度 0.2..=1.0（背景提活幅度 + 顶部光池强度，0=轻 1=强）
+    #[serde(default = "default_glass_strength")]
+    pub glass_strength: f64,
     /// 宽度模式
     #[serde(default, deserialize_with = "lenient_size_mode")]
     pub width_mode: SizeMode,
@@ -170,6 +177,7 @@ impl Default for Settings {
             history_limit: 15,
             shortcut: "Command+Shift+V".into(),
             opacity: 0.9,
+            glass_strength: 0.7,
             width_mode: SizeMode::Auto,
             height_mode: SizeMode::Auto,
             window_width: 360,

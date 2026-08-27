@@ -51,6 +51,8 @@ const zh = {
 
   // ---- 外观 ----
   opacity: '弹窗透明度',
+  glass_strength: '高光反光 / 玻璃质感',
+  glass_strength_hint: '低 = 柔和哑光 · 高 = 晶莹流光、高光棱线与控件反光更亮',
   win_width: '窗口宽度',
   win_height: '窗口高度',
   mode_auto: '自动',
@@ -162,6 +164,8 @@ const en: Record<I18nKey, string> = {
 
   // ---- Appearance ----
   opacity: 'Popup opacity',
+  glass_strength: 'Glass Specularity / Luster',
+  glass_strength_hint: 'Low = subtle matte · High = luminous rim highlight & crystalline luster',
   win_width: 'Window width',
   win_height: 'Window height',
   mode_auto: 'Auto',

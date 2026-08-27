@@ -1,7 +1,18 @@
 /* 设置页共享样式：由 +page.svelte 引入一次，六个 tab 子组件复用这些类名。
    内容迁移自原单体组件的 <style>，视觉不变（类名保持一致）。
    注意：这是普通 CSS 文件，不能用 Svelte 的 :global() 语法；
-   变量定义在 :root 上（设置窗口是独立文档，不会影响主弹窗）。 */
+   变量定义在 :root 上（设置窗口是独立文档，不会影响主弹窗）。
+
+   液态玻璃：窗口本体保持不透明（与 macOS 系统设置一致），
+   卡片/侧栏/控件使用 LiquidGlass token（npm 依赖 @hwyuanzi/liquid-glass-ui）。 */
+@import "@hwyuanzi/liquid-glass-ui/css";
+
+*,
+*::before,
+*::after {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 
 html,
 body {
@@ -18,6 +29,23 @@ body {
   --border: rgba(0, 0, 0, 0.08);
   --accent: #0a84ff;
   --danger: #ff3b30;
+
+  /* ---- LiquidGlass token（浅色）：白玻璃卡片 + 深墨字 ---- */
+  --lg-tint: 250, 250, 252;
+  --lg-tint-strength: 0.4;
+  --lg-blur: 0px;
+  --lg-border: rgba(255, 255, 255, 0.65);
+  --lg-rim: rgba(255, 255, 255, 0.9);
+  --lg-specular: inset 0 1px 1px rgba(255, 255, 255, 0.65);
+  --lg-occlusion: inset 0 -1px 1px rgba(18, 24, 38, 0.06);
+  --lg-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --lg-radius: 13px;
+  --lg-ink: #1d1d1f;
+  --lg-ink-soft: rgba(29, 29, 31, 0.62);
+  --glass-card: rgba(250, 250, 252, 0.72);
+  --glass-soft: rgba(120, 120, 128, 0.09);
+  --accent-soft: rgba(10, 132, 255, 0.13);
+  --accent-soft-strong: rgba(10, 132, 255, 0.2);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -29,6 +57,20 @@ body {
     --border: rgba(255, 255, 255, 0.09);
     --accent: #0a84ff;
     --danger: #ff453a;
+
+    --lg-tint: 44, 44, 48;
+    --lg-tint-strength: 0.5;
+    --lg-border: rgba(255, 255, 255, 0.14);
+    --lg-rim: rgba(255, 255, 255, 0.22);
+    --lg-specular: inset 0 1px 1px rgba(255, 255, 255, 0.16);
+    --lg-occlusion: inset 0 -1px 1px rgba(0, 0, 0, 0.3);
+    --lg-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+    --lg-ink: #f5f5f7;
+    --lg-ink-soft: rgba(245, 245, 247, 0.68);
+    --glass-card: rgba(44, 44, 48, 0.8);
+    --glass-soft: rgba(120, 120, 128, 0.14);
+    --accent-soft: rgba(10, 132, 255, 0.22);
+    --accent-soft-strong: rgba(10, 132, 255, 0.32);
   }
 }
 
@@ -61,9 +103,9 @@ body {
 .logo {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: 9px;
   object-fit: cover;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18), var(--lg-specular);
 }
 .brand b {
   display: block;
@@ -88,10 +130,10 @@ nav button {
   background: transparent;
   color: var(--text);
   font-size: 12.5px;
-  padding: 7px 9px;
-  border-radius: 7px;
+  padding: 7px 11px;
+  border-radius: 999px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, box-shadow 0.15s, color 0.15s;
   text-align: left;
 }
 nav button svg {
@@ -102,12 +144,13 @@ nav button svg {
   transition: color 0.15s;
 }
 nav button:hover {
-  background: rgba(120, 120, 128, 0.12);
+  background: var(--glass-soft);
 }
 nav button.active {
-  background: rgba(10, 132, 255, 0.14);
+  background: var(--accent-soft);
   color: var(--text);
   font-weight: 600;
+  box-shadow: var(--lg-specular), 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 nav button.active svg {
   color: var(--accent);
@@ -138,11 +181,11 @@ section h2 {
   margin: 0 0 14px;
 }
 .card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: var(--glass-card);
+  border: 1px solid var(--lg-border);
+  border-radius: var(--lg-radius);
   padding: 18px 20px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--lg-shadow), var(--lg-specular), var(--lg-occlusion);
 }
 .divider {
   height: 1px;
@@ -180,8 +223,10 @@ section h2 {
 .sub {
   margin-top: 14px;
   padding: 12px 14px;
-  background: var(--bg);
-  border-radius: 9px;
+  background: rgba(var(--lg-tint), 0.38);
+  border: 1px solid var(--lg-border);
+  border-radius: calc(var(--lg-radius) - 3px);
+  box-shadow: var(--lg-specular);
 }
 
 input[type='range'] {
@@ -204,12 +249,12 @@ input[type='range'] {
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #fff;
   border: 0.5px solid rgba(0, 0, 0, 0.12);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22), var(--lg-specular);
   transition: transform 0.12s;
 }
 input[type='range']::-webkit-slider-thumb:hover {
@@ -218,25 +263,36 @@ input[type='range']::-webkit-slider-thumb:hover {
 
 .seg {
   display: flex;
-  gap: 6px;
+  gap: 3px;
   margin-top: 10px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(var(--lg-tint), 0.3);
+  border: 1px solid var(--lg-border);
+  box-shadow: var(--lg-specular), var(--lg-occlusion);
 }
 .seg button {
   flex: 1;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  border: none;
+  background: transparent;
   color: var(--text);
-  border-radius: 8px;
-  padding: 7px 0;
+  border-radius: 999px;
+  padding: 6px 0;
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background 0.18s, box-shadow 0.18s, color 0.18s, font-weight 0.18s;
+}
+.seg button:hover {
+  color: var(--text);
+  background: rgba(var(--lg-tint), 0.25);
 }
 .seg button.on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: rgba(var(--lg-tint), 0.8);
+  font-weight: 600;
+  color: var(--text);
+  box-shadow: var(--lg-specular), var(--lg-occlusion),
+    0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 .toggle {
@@ -248,7 +304,8 @@ input[type='range']::-webkit-slider-thumb:hover {
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.18s;
+  transition: background 0.18s, box-shadow 0.18s;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 .toggle::after {
   content: '';
@@ -259,30 +316,35 @@ input[type='range']::-webkit-slider-thumb:hover {
   height: 21px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), var(--lg-specular);
   transition: left 0.18s;
 }
 .toggle.on {
   background: var(--accent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08), var(--lg-specular);
 }
 .toggle.on::after {
   left: 19px;
 }
 
 .keybtn {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 7px 14px;
-  background: var(--accent);
+  border: 1px solid rgba(10, 132, 255, 0.45);
+  border-radius: 999px;
+  padding: 7px 16px;
+  background: linear-gradient(180deg, #3a9bff 0%, #0a84ff 100%);
   color: #fff;
   font-size: 12.5px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: filter 0.15s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: filter 0.15s, transform 0.12s;
 }
 .keybtn:hover {
   filter: brightness(1.08);
+}
+.keybtn:hover:not(:disabled) {
+  transform: translateY(-1px);
 }
 .keybtn:disabled {
   opacity: 0.6;
@@ -296,11 +358,12 @@ input[type='range']::-webkit-slider-thumb:hover {
   margin-bottom: 14px;
 }
 .stat {
-  background: var(--card);
-  border: 1px solid var(--border);
+  background: var(--glass-card);
+  border: 1px solid var(--lg-border);
   border-radius: 11px;
   padding: 14px 6px;
   text-align: center;
+  box-shadow: var(--lg-specular), var(--lg-occlusion);
 }
 .stat b {
   display: block;
@@ -314,7 +377,8 @@ input[type='range']::-webkit-slider-thumb:hover {
 .path {
   font-size: 10px;
   color: var(--muted);
-  background: var(--bg);
+  background: rgba(var(--lg-tint), 0.38);
+  border: 1px solid var(--lg-border);
   border-radius: 7px;
   padding: 8px 10px;
   margin-top: 8px;
@@ -368,12 +432,13 @@ input[type='range']::-webkit-slider-thumb:hover {
 }
 
 .about-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: var(--glass-card);
+  border: 1px solid var(--lg-border);
+  border-radius: var(--lg-radius);
   padding: 26px 20px;
   text-align: center;
   margin-bottom: 14px;
+  box-shadow: var(--lg-shadow), var(--lg-specular), var(--lg-occlusion);
 }
 .about-logo {
   width: 56px;
@@ -381,7 +446,7 @@ input[type='range']::-webkit-slider-thumb:hover {
   border-radius: 14px;
   object-fit: cover;
   margin: 0 auto 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22), var(--lg-specular);
 }
 .about-card b {
   display: block;
@@ -431,21 +496,22 @@ input[type='range']::-webkit-slider-thumb:hover {
   align-items: center;
   gap: 9px;
   padding: 6px 8px;
-  border-radius: 7px;
-  transition: background 0.12s;
+  border-radius: 8px;
+  transition: background 0.12s, box-shadow 0.12s;
 }
 .entry:hover {
-  background: var(--bg);
+  background: var(--glass-soft);
+  box-shadow: var(--lg-specular);
 }
 .e-ico {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
 }
-.e-url { color: #34c759; }
-.e-image { color: #bf5af2; }
+.e-url { color: #28a745; }
+.e-image { color: #a855f7; }
 .e-file { color: #ff9f0a; }
-.e-rtf { color: #64d2ff; }
+.e-rtf { color: #0a84ff; }
 .e-txt {
   flex: 1;
   white-space: nowrap;
@@ -488,8 +554,10 @@ input[type='range']::-webkit-slider-thumb:hover {
 .update-msg {
   margin-top: 12px;
   padding: 8px 12px;
-  background: var(--bg);
-  border-radius: 7px;
+  background: rgba(var(--lg-tint), 0.38);
+  border: 1px solid var(--lg-border);
+  border-radius: 8px;
+  box-shadow: var(--lg-specular);
   white-space: pre-line;
 }
 

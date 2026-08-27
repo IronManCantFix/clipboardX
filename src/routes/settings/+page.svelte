@@ -15,6 +15,7 @@
     history_limit: 15,
     shortcut: 'Command+Shift+V',
     opacity: 0.9,
+    glass_strength: 0.7,
     width_mode: 'auto',
     height_mode: 'auto',
     window_width: 360,

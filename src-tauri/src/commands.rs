@@ -252,6 +252,59 @@ pub fn get_settings(state: tauri::State<'_, AppState>) -> Result<Settings, Strin
     Ok(lock_settings(&state).settings.clone())
 }
 
+/// 将透明度设置仅应用到 macOS 原生毛玻璃背景（NSVisualEffectView），
+/// 同时保持 NSWindow 本身与 WKWebView 100% 不透明：
+/// 1. 毛玻璃底板以用户设定的透明度透出桌面壁纸；
+/// 2. 界面内的文字、图标、边框保持 100% 饱满实色，绝不发虚发淡；
+/// 3. 完全避免 WebKit 滚动残影。
+pub fn apply_native_window_opacity(app: &tauri::AppHandle, opacity: f64) {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::Manager;
+        if let Some(win) = app.get_webview_window("main") {
+            if let Ok(ns_win_ptr) = win.ns_window() {
+                let alpha = opacity.clamp(0.15, 1.0);
+                unsafe {
+                    use objc2::runtime::AnyObject;
+                    let ns_win = ns_win_ptr as *mut AnyObject;
+                    // 1. 窗口保持 100% 不透明，确保文字与前景元素始终清晰深墨/纯白
+                    let _: () = objc2::msg_send![ns_win, setAlphaValue: 1.0f64];
+                    // 2. 递归查找并只调节 NSVisualEffectView 的背景透明度
+                    let content_view: *mut AnyObject = objc2::msg_send![ns_win, contentView];
+                    if !content_view.is_null() {
+                        set_effect_views_alpha(content_view, alpha);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn set_effect_views_alpha(view: *mut objc2::runtime::AnyObject, alpha: f64) {
+    use objc2::runtime::AnyObject;
+    let is_effect_view: bool = objc2::msg_send![view, isKindOfClass: objc2::class!(NSVisualEffectView)];
+    if is_effect_view {
+        let _: () = objc2::msg_send![view, setAlphaValue: alpha];
+    }
+    let subviews: *mut AnyObject = objc2::msg_send![view, subviews];
+    if !subviews.is_null() {
+        let count: usize = objc2::msg_send![subviews, count];
+        for i in 0..count {
+            let child: *mut AnyObject = objc2::msg_send![subviews, objectAtIndex: i];
+            if !child.is_null() {
+                set_effect_views_alpha(child, alpha);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_window_opacity(app: tauri::AppHandle, opacity: f64) -> Result<(), String> {
+    apply_native_window_opacity(&app, opacity);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn update_settings(
     app: tauri::AppHandle,
@@ -269,6 +322,7 @@ pub fn update_settings(
         crate::shortcut::replace_shortcut(&app, &new_shortcut, &old.shortcut)?;
         swapped = true;
     }
+    let opacity = settings.opacity;
     let save_result = {
         let mut guard = lock_settings(&state);
         guard.settings = settings;
@@ -284,6 +338,7 @@ pub fn update_settings(
         lock_settings(&state).settings = restored;
         return Err(e.to_string());
     }
+    apply_native_window_opacity(&app, opacity);
     Ok(())
 }
 

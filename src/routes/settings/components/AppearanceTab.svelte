@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t } from '../../../lib/i18n';
-  import type { SettingSetter, Settings } from '../../../lib/api';
+  import { api, type SettingSetter, type Settings } from '../../../lib/api';
   import { pct } from '../format';
 
   let { settings, setter }: { settings: Settings; setter: SettingSetter } = $props();
@@ -17,7 +17,23 @@
       <input type="range" min="0.3" max="1" step="0.05" value={settings.opacity}
              style="--p:{pct(settings.opacity, 0.3, 1)}%"
              aria-label={t('opacity')}
-             oninput={(e) => setter('opacity', Number((e.target as HTMLInputElement).value))} />
+             oninput={(e) => {
+               const val = Number((e.target as HTMLInputElement).value);
+               void api.setWindowOpacity(val);
+               setter('opacity', val);
+             }} />
+    </div>
+    <div class="divider"></div>
+    <div class="field">
+      <div class="row-top">
+        <span class="lbl">{t('glass_strength')}</span>
+        <span class="val">{Math.round(settings.glass_strength * 100)}%</span>
+      </div>
+      <input type="range" min="0.2" max="1" step="0.05" value={settings.glass_strength}
+             style="--p:{pct(settings.glass_strength, 0.2, 1)}%"
+             aria-label={t('glass_strength')}
+             oninput={(e) => setter('glass_strength', Number((e.target as HTMLInputElement).value))} />
+      <p class="hint">{t('glass_strength_hint')}</p>
     </div>
     <div class="divider"></div>
     <div class="field">

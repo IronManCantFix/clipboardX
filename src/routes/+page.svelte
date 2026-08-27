@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+  import { listen } from '@tauri-apps/api/event';
   import { api, onNewEntry, type Entry, type Settings } from '../lib/api';
   import { filterEntries } from '../lib/search';
   import { t } from '../lib/i18n';
@@ -19,6 +20,7 @@
     history_limit: 15,
     shortcut: 'Command+Shift+V',
     opacity: 0.9,
+    glass_strength: 0.7,
     width_mode: 'auto',
     height_mode: 'auto',
     window_width: 360,
@@ -33,6 +35,8 @@
   const EMPTY_H = 100;
   const MAX_LIST_H = 15 * ROW_H;
   const AUTO_W = 360;
+
+  let unListenShown: (() => void) | undefined;
 
   function applyFilter(list: Entry[]): Entry[] {
     return settings.search_enabled ? filterEntries(list, query, settings.search_mode) : list;
@@ -133,9 +137,38 @@
     }
   });
 
-  // 应用透明度
+  // 应用透明度 + 高光反光/玻璃质感。
+  // 1. 原生 Popover 模糊材质提供稳定无残影的毛玻璃底层。
+  // 2. 通过 setWindowOpacity 动态调整系统级窗口透明度（透出桌面壁纸）。
+  // 3. glass_strength 控制明显的高光反光：顶部光池、晶莹边框棱线、控件反光与内嵌高光。
   $effect(() => {
-    document.documentElement.style.setProperty('--pop-alpha', String(settings.opacity));
+    void api.setWindowOpacity(settings.opacity);
+    const gs = settings.glass_strength;
+    const t = Math.max(0, Math.min(1, (gs - 0.2) / 0.8));
+    const root = document.documentElement;
+    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    // 1. 顶部光池强度
+    root.style.setProperty('--glass-sheen-top', (0.04 + t * 0.46).toFixed(3));
+    root.style.setProperty('--glass-sheen-mid', (0.01 + t * 0.12).toFixed(3));
+    root.style.setProperty('--glass-sheen-dark-top', (0.03 + t * 0.35).toFixed(3));
+    root.style.setProperty('--glass-sheen-dark-mid', (0.008 + t * 0.09).toFixed(3));
+
+    // 2. 边框晶莹反光与棱线
+    const borderA = isDark ? (0.10 + t * 0.35).toFixed(3) : (0.20 + t * 0.70).toFixed(3);
+    const lgBorderA = isDark ? (0.12 + t * 0.32).toFixed(3) : (0.25 + t * 0.65).toFixed(3);
+    root.style.setProperty('--pop-border', `rgba(255, 255, 255, ${borderA})`);
+    root.style.setProperty('--lg-border', `rgba(255, 255, 255, ${lgBorderA})`);
+
+    // 3. 内嵌高光（Specular Bevel）
+    const specA = isDark ? (0.08 + t * 0.35).toFixed(3) : (0.20 + t * 0.75).toFixed(3);
+    root.style.setProperty('--lg-specular', `inset 0 1px 1px rgba(255, 255, 255, ${specA})`);
+
+    // 4. 搜索框与控件反光底色
+    const fillA = isDark ? (0.06 + t * 0.20).toFixed(3) : (0.15 + t * 0.45).toFixed(3);
+    const fillHoverA = isDark ? (0.14 + t * 0.25).toFixed(3) : (0.28 + t * 0.48).toFixed(3);
+    root.style.setProperty('--glass-fill-idle', `rgba(255, 255, 255, ${fillA})`);
+    root.style.setProperty('--glass-fill-hover', `rgba(255, 255, 255, ${fillHoverA})`);
   });
 
   onMount(async () => {
@@ -164,7 +197,15 @@
         void win.hide();
       }
     });
+    // 唤起即重读设置：macOS accessory 窗口的 Focused 事件不可靠，
+    // 仅靠 onFocusChanged 可能在设置改动后拿不到新值
+    unListenShown = await listen('popover-shown', () => {
+      void api.getSettings().then((s) => (settings = s)).catch(() => {});
+      void refresh();
+    });
   });
+
+  onDestroy(() => unListenShown?.());
 
   function onKeydown(e: KeyboardEvent) {
     // 搜索框内按退格属于编辑搜索词，不应触发「删除条目」
@@ -209,6 +250,7 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="pop">
+  <div class="pop-bg"></div>
   {#if settings.search_enabled}
     <div class="search">
       <input bind:this={searchInput} bind:value={query} placeholder={t('ph_search')}

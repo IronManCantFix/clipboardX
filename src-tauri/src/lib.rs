@@ -54,6 +54,18 @@ pub fn run() {
             store.vacuum_if_large(32 * 1024 * 1024);
             let settings = settings::SettingsStore::load(&data_dir.join("settings.json"))
                 .map_err(|e| format!("settings load failed: {e}"))?;
+
+            // 原生 Popover 磨砂材质 + 系统级窗口透明度：
+            // 1. NSVisualEffectView 提供原生高质量毛玻璃，并为 WebKit 提供稳定的图层底板，彻底根除滚动残影。
+            // 2. 结合 NSWindow setAlphaValue，让整个窗口（含毛玻璃）以设定透明度透出桌面壁纸。
+            // 3. 传入 Some(12.0) 圆角半径，精确对齐 CSS .pop 的 12px 圆角，消除直角尖角。
+            if let Some(main_win) = app.get_webview_window("main") {
+                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                let _ = apply_vibrancy(&main_win, NSVisualEffectMaterial::Popover, None, Some(12.0));
+                commands::apply_native_window_opacity(app.handle(), settings.settings.opacity);
+                logging::info("vibrancy applied to 'main' (Popover + 12px radius + native window alpha)");
+            }
+
             let state = commands::AppState {
                 store: std::sync::Mutex::new(store),
                 settings: std::sync::Mutex::new(settings),
@@ -133,6 +145,7 @@ pub fn run() {
             commands::paste_entry,
             commands::get_settings,
             commands::update_settings,
+            commands::set_window_opacity,
             commands::get_storage_stats,
             commands::clear_images,
             commands::clear_history,

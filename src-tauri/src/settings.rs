@@ -42,6 +42,7 @@ impl SettingsStore {
             self.settings.shortcut = "Command+Shift+V".into();
         }
         self.settings.opacity = self.settings.opacity.clamp(0.3, 1.0);
+        self.settings.glass_strength = self.settings.glass_strength.clamp(0.2, 1.0);
         self.settings.window_width = self.settings.window_width.clamp(220, 800);
         self.settings.window_height = self.settings.window_height.clamp(200, 1200);
         self.settings.image_preview_height = self.settings.image_preview_height.clamp(24, 200);

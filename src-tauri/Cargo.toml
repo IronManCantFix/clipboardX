@@ -1,6 +1,6 @@
 [package]
 name = "clipboardx"
-version = "0.3.1"
+version = "0.3.2"
 description = "A Tauri App"
 authors = ["ClipboardX Contributors"]
 edition = "2021"
@@ -34,6 +34,9 @@ image = { version = "0.25", default-features = false, features = ["png", "tiff"]
 objc2 = { version = "0.6", features = ["catch-all"] }
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSEvent", "NSWorkspace"] }
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSObject", "NSString", "NSURL"] }
+# 液态玻璃：给主弹窗挂系统 NSVisualEffectView 材质（真实背景模糊，自适应深浅色）。
+# tauri 已传递依赖本 crate，此处声明为直接依赖供 lib.rs 调用。
+window-vibrancy = "0.6"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

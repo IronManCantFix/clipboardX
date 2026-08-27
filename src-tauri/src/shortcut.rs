@@ -4,7 +4,7 @@ use crate::commands::lock_settings;
 use crate::models::{now_ms, PositionMode};
 use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, LogicalPosition, Manager};
+use tauri::{AppHandle, Emitter, LogicalPosition, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -188,11 +188,17 @@ pub fn show_popover(app: &AppHandle) {
         // accessory app 在同一帧内 set_focus 无效，且窗口未聚焦会触发
         // Focused(false) → hide 竞态（弹窗一闪而过）
         mark_shown();
+        let opacity = lock_settings(&app.state::<crate::commands::AppState>()).settings.opacity;
+        crate::commands::apply_native_window_opacity(app, opacity);
         let w = win;
         let _ = app.run_on_main_thread(Box::new(move || {
             let _ = w.show();
             let _ = w.set_focus();
         }));
+        // 通知前端「弹窗已显示」：弹窗靠此事件重读设置与列表。
+        // 不能只依赖窗口 Focused 事件——macOS accessory 窗口的焦点事件不可靠，
+        // 设置里拖动滑杆后弹窗可能拿不到新值（表现为外观无变化）。
+        let _ = app.emit("popover-shown", ());
     }
 }
 

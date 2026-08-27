@@ -21,6 +21,8 @@ export interface Settings {
   history_limit: number;
   shortcut: string;
   opacity: number;
+  /** 液态玻璃强度 0.2..=1.0（背景提活幅度 + 顶部光池强度） */
+  glass_strength: number;
   width_mode: 'auto' | 'custom';
   height_mode: 'auto' | 'custom';
   window_width: number;
@@ -63,6 +65,7 @@ export const api = {
   checkUpdate: () => invoke<UpdateInfo>('check_update'),
   installUpdate: () => invoke<string>('install_update'),
   updateSettings: (settings: Settings) => invoke('update_settings', { settings }),
+  setWindowOpacity: (opacity: number) => invoke('set_window_opacity', { opacity }),
 };
 
 export function onNewEntry(cb: () => void): Promise<() => void> {
