@@ -169,7 +169,7 @@ fn listener_iteration(
     }
     *last_detected = Some(detected.clone());
     let now = now_ms();
-    let source_app = frontmost_app_name();
+    let source_app = frontmost_app_name(app);
     if let Detected::Image(hash) = &detected {
         // 图片保存（TIFF/PNG 解码 + PNG 编码）较慢：交给单一工作线程串行处理，
         // 避免阻塞监听，也避免连截多图时无上限地并发解码造成内存尖峰。
@@ -316,7 +316,13 @@ fn spawn_listener_worker(app: AppHandle) {
                 }
             }
             let _clear_on_exit = ClearActive;
-            let mut last_count = change_count();
+            // 先打心跳再做任何初始化：即使初始化阶段的 ObjC 调用抛异常（catch-all
+            // 下为 panic），看门狗也能据此发现线程已死并重启，而不是静默失联。
+            LAST_HEARTBEAT.store(now_ms(), Ordering::Relaxed);
+            // 初始 changeCount 也纳入兜底：失败按 0 处理（下一轮循环会全量读取一次，
+            // 等价于从零开始监听，行为正确）。
+            let mut last_count =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(change_count)).unwrap_or(0);
             let mut last_detected: Option<Detected> = None;
             // 空闲迭代计数：剪贴板长期不变时逐步放慢轮询，降低空转功耗；
             // 任一次活动（或有异常）都会让计数增长，有变化则立即清零回快速档。
@@ -324,22 +330,39 @@ fn spawn_listener_worker(app: AppHandle) {
             loop {
                 LAST_HEARTBEAT.store(now_ms(), Ordering::Relaxed);
                 std::thread::sleep(Duration::from_millis(poll_interval_ms(idle_iters)));
-                // 捕获单次迭代的任何 panic：失败只跳过这一次，监听线程保持存活
+                // 捕获单次迭代的任何 panic（catch-all 下 ObjC 异常即是此形态）：
+                // 失败只跳过这一次，监听线程保持存活
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     listener_iteration(&app, &mut last_count, &mut last_detected)
                 }));
                 match result {
                     Ok(true) => idle_iters = 0,
                     Ok(false) => idle_iters = idle_iters.saturating_add(1),
-                    Err(_) => {
+                    Err(payload) => {
                         idle_iters = idle_iters.saturating_add(1);
-                        eprintln!("[clipboardx] listener iteration panicked (recovered)");
-                        crate::logging::error("listener iteration panicked (recovered)");
+                        let detail = panic_payload_string(&payload);
+                        eprintln!("[clipboardx] listener iteration panicked (recovered): {detail}");
+                        crate::logging::error(format!(
+                            "listener iteration panicked (recovered): {detail}"
+                        ));
                     }
                 }
             }
         })
         .expect("spawn listener worker");
+}
+
+/// 提取 panic 载荷中的消息文本（与 logging.rs 的 panic 钩子同一套逻辑）。
+/// catch-all 把 ObjC 异常转成的 panic 载荷是 String，内含异常描述与 ObjC 堆栈，
+/// 打印出来即可在下一次日志中定位具体是哪个 AppKit 调用抛的异常。
+fn panic_payload_string(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        format!("{payload:?}")
+    }
 }
 
 /// 自适应轮询间隔：空闲越久轮询越慢（300ms → 700ms → 1400ms 上限）。
@@ -360,7 +383,9 @@ pub fn spawn_listener(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(5));
         let last = LAST_HEARTBEAT.load(Ordering::Relaxed);
-        if last != 0 && now_ms().saturating_sub(last) > 10_000 {
+        // last==0 也不再豁免：覆盖「线程在写入首个心跳之前就死掉」（如初始化阶段
+        // 的 ObjC panic）的情况，让看门狗同样能把它拉起来。
+        if now_ms().saturating_sub(last) > 10_000 {
             println!("[clipboardx] listener heartbeat stale; restarting listener");
             crate::logging::info("listener heartbeat stale; trying to restart listener");
             LAST_HEARTBEAT.store(now_ms(), Ordering::Relaxed);
@@ -425,13 +450,34 @@ fn downscale(img: &image::DynamicImage, max: u32) -> image::DynamicImage {
     img.resize(nw, nh, image::imageops::FilterType::Lanczos3)
 }
 
-/// 前台应用名（objc2 NSWorkspace；失败返回 None）
-fn frontmost_app_name() -> Option<String> {
-    objc2::rc::autoreleasepool(|_| {
-        let ws = objc2_app_kit::NSWorkspace::sharedWorkspace();
-        let app = ws.frontmostApplication()?;
-        Some(app.localizedName()?.to_string())
-    })
+/// 前台应用名（objc2 NSWorkspace；失败返回 None）。
+///
+/// NSWorkspace 不是线程安全的，必须在主线程调用；监听线程通过
+/// `run_on_main_thread` 派发并在超时预算内同步等待（1.5s,远超正常耗时,
+/// 取不到则本次条目不记录来源应用,不阻塞监听）。配合 objc2 的 catch-all,
+/// 任何 ObjC 异常都被隔离在本函数内,绝不外溢成进程级崩溃。
+fn frontmost_app_name(app: &AppHandle) -> Option<String> {
+    let query = || -> Option<String> {
+        objc2::rc::autoreleasepool(|_| {
+            let ws = objc2_app_kit::NSWorkspace::sharedWorkspace();
+            let front = ws.frontmostApplication()?;
+            Some(front.localizedName()?.to_string())
+        })
+    };
+    // 已在主线程则直接执行（本函数只会被监听线程调用，此分支为防御性兜底）
+    if objc2::MainThreadMarker::new().is_some() {
+        return query();
+    }
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Option<String>>(1);
+    if app
+        .run_on_main_thread(move || {
+            let _ = tx.send(query());
+        })
+        .is_err()
+    {
+        return None;
+    }
+    rx.recv_timeout(Duration::from_millis(1500)).ok().flatten()
 }
 
 #[cfg(test)]

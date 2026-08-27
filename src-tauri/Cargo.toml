@@ -27,7 +27,11 @@ tauri-plugin-updater = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
-objc2 = "0.6"
+# catch-all：ObjC 异常在默认配置下会直接穿过 Rust 帧并 abort 整个进程（SIGABRT，
+# 历史崩溃报告 clipboardx-2026-08-27 即此，发生在监听线程读剪贴板/NSWorkspace 时）。
+# 启用后每个 msg_send 都被 @catch 包裹，异常转换为带描述与堆栈的 Rust panic，
+# 可被监听循环已有的 catch_unwind 捕获恢复（详见 listener.rs / clipboard.rs 注释）。
+objc2 = { version = "0.6", features = ["catch-all"] }
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSEvent", "NSWorkspace"] }
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSObject", "NSString", "NSURL"] }
 

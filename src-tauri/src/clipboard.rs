@@ -1,6 +1,7 @@
 use objc2::rc::{autoreleasepool, Retained};
 #[allow(deprecated)]
 use objc2::runtime::ProtocolObject;
+use objc2::ClassType;
 use objc2_app_kit::{
     NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeRTF,
     NSPasteboardTypeString, NSPasteboardTypeTIFF, NSPasteboardWriting,
@@ -28,6 +29,19 @@ static PASTEBOARD_LOCK: Mutex<()> = Mutex::new(());
 fn with_pasteboard<T>(f: impl FnOnce() -> T) -> T {
     let _guard = PASTEBOARD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     f()
+}
+
+/// 执行可能因 ObjC 异常失败的闭包（catch-all 特性下异常表现为 Rust panic，
+/// 见 Cargo.toml 中 objc2 的注释）。写剪贴板由 Tauri 命令在主线程调用，
+/// 主线程 panic 会直接退出进程——这里兜底捕获并记录，保证单次写失败只是
+/// 「这次粘贴没生效」，不会拖垮应用。
+fn try_objc(what: &str, f: impl FnOnce()) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    if result.is_err() {
+        let msg = format!("{what} panicked (recovered)");
+        eprintln!("[clipboardx] {msg}");
+        crate::logging::error(msg);
+    }
 }
 
 /// 一次剪贴板快照。M1 覆盖：文本 / RTF / 文件 / 图片标记。
@@ -82,8 +96,15 @@ pub fn read_clipboard() -> ClipboardSnapshot {
             let rtf = pb.dataForType(pb_type_rtf()).map(|d| d.to_vec());
             // 现代文件类型：NSPasteboardTypeFileURL（NSURL 数组），旧 NSFilenamesPboardType 已废弃。
             // path() 解出解码后的 POSIX 路径（浏览器拖拽/访达复制均适用）；非文件 URL 返回 None 直接跳过。
+            // 先校验类型再强转：pasteboard 上的数据可能被其它应用写成非 NSArray<NSURL> 形态
+            // （历史崩溃：对错误类直接 cast_unchecked 后迭代，在 objc_msgSend 处 EXC_BAD_ACCESS）。
+            // AnyObject 不实现 NSObjectProtocol，这里用 msg_send! 直接发 isKindOfClass: 消息，
+            // 校验不过则视为「没有文件」。
             let files: Vec<String> = pb
                 .propertyListForType(pb_type_file_url())
+                .filter(|pl| unsafe {
+                    objc2::msg_send![pl, isKindOfClass: NSArray::<NSURL>::class()]
+                })
                 .map(|pl| {
                     let arr: Retained<NSArray<NSURL>> = unsafe { Retained::cast_unchecked(pl) };
                     arr.iter()
@@ -111,24 +132,28 @@ pub fn read_clipboard() -> ClipboardSnapshot {
 
 pub fn write_text(s: &str) {
     with_pasteboard(|| {
-        autoreleasepool(|_| {
-            let pb = NSPasteboard::generalPasteboard();
-            pb.clearContents();
-            let ns = NSString::from_str(s);
-            let _ = pb.setString_forType(&ns, pb_type_string());
-        })
+        try_objc("clipboard write_text", || {
+            autoreleasepool(|_| {
+                let pb = NSPasteboard::generalPasteboard();
+                pb.clearContents();
+                let ns = NSString::from_str(s);
+                let _ = pb.setString_forType(&ns, pb_type_string());
+            })
+        });
     });
 }
 
 pub fn write_image_png(path: &str) -> Result<(), String> {
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
     with_pasteboard(|| {
-        autoreleasepool(|_| {
-            let pb = NSPasteboard::generalPasteboard();
-            pb.clearContents();
-            let ns = NSData::from_vec(data);
-            let _ = pb.setData_forType(Some(&ns), pb_type_png());
-        })
+        try_objc("clipboard write_image_png", || {
+            autoreleasepool(|_| {
+                let pb = NSPasteboard::generalPasteboard();
+                pb.clearContents();
+                let ns = NSData::from_vec(data.to_vec());
+                let _ = pb.setData_forType(Some(&ns), pb_type_png());
+            })
+        });
     });
     Ok(())
 }
@@ -138,16 +163,18 @@ pub fn write_image_png(path: &str) -> Result<(), String> {
 /// 否则它们会拿到空剪贴板（历史 bug：RTF 条目粘贴到终端无效）。
 pub fn write_rtf_with_text(data: &[u8], text: &str) {
     with_pasteboard(|| {
-        autoreleasepool(|_| {
-            let pb = NSPasteboard::generalPasteboard();
-            pb.clearContents();
-            let d = NSData::from_vec(data.to_vec());
-            let _ = pb.setData_forType(Some(&d), pb_type_rtf());
-            if !text.is_empty() {
-                let s = NSString::from_str(text);
-                let _ = pb.setString_forType(&s, pb_type_string());
-            }
-        })
+        try_objc("clipboard write_rtf_with_text", || {
+            autoreleasepool(|_| {
+                let pb = NSPasteboard::generalPasteboard();
+                pb.clearContents();
+                let d = NSData::from_vec(data.to_vec());
+                let _ = pb.setData_forType(Some(&d), pb_type_rtf());
+                if !text.is_empty() {
+                    let s = NSString::from_str(text);
+                    let _ = pb.setString_forType(&s, pb_type_string());
+                }
+            })
+        });
     });
 }
 
@@ -155,20 +182,22 @@ pub fn write_rtf_with_text(data: &[u8], text: &str) {
 /// NSFilenamesPboardType 组合；系统会自动补齐兼容所需的其它表示形式。
 pub fn write_files(paths: &[String]) {
     with_pasteboard(|| {
-        autoreleasepool(|_| {
-            let pb = NSPasteboard::generalPasteboard();
-            pb.clearContents();
-            let objs: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
-                .iter()
-                .map(|p| {
-                    let ns = NSString::from_str(p);
-                    // fileURLWithPath 对任意路径都会构造 NSURL（空串除外，调用方不会传）
-                    let url = NSURL::fileURLWithPath(&ns);
-                    ProtocolObject::<dyn NSPasteboardWriting>::from_retained(url)
-                })
-                .collect();
-            let arr = NSArray::from_retained_slice(&objs);
-            let _ = pb.writeObjects(&arr);
-        })
+        try_objc("clipboard write_files", || {
+            autoreleasepool(|_| {
+                let pb = NSPasteboard::generalPasteboard();
+                pb.clearContents();
+                let objs: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
+                    .iter()
+                    .map(|p| {
+                        let ns = NSString::from_str(p);
+                        // fileURLWithPath 对任意路径都会构造 NSURL（空串除外，调用方不会传）
+                        let url = NSURL::fileURLWithPath(&ns);
+                        ProtocolObject::<dyn NSPasteboardWriting>::from_retained(url)
+                    })
+                    .collect();
+                let arr = NSArray::from_retained_slice(&objs);
+                let _ = pb.writeObjects(&arr);
+            })
+        });
     });
 }

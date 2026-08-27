@@ -113,13 +113,35 @@ pub fn activate_app() {
 }
 
 /// 记录当前前台应用 pid（在快捷键唤起弹窗前调用）。
-fn remember_front_app() {
-    let pid = objc2::rc::autoreleasepool(|_| {
-        let ws = objc2_app_kit::NSWorkspace::sharedWorkspace();
-        ws.frontmostApplication()
-            .map(|a| a.processIdentifier())
-            .unwrap_or(0)
-    });
+/// NSWorkspace 非线程安全，必须在主线程调用；快捷键回调运行在插件线程，
+/// 通过 run_on_main_thread 派发并同步等待（500ms 超时，失败按 0 处理：
+/// 粘贴后不归还焦点，不做任何 AppKit 调用）。
+fn remember_front_app(app: &AppHandle) {
+    let query = || -> i32 {
+        objc2::rc::autoreleasepool(|_| {
+            let ws = objc2_app_kit::NSWorkspace::sharedWorkspace();
+            ws.frontmostApplication()
+                .map(|a| a.processIdentifier())
+                .unwrap_or(0)
+        })
+    };
+    // 已在主线程（防御：理论上不会被这样调用）则直接执行，避免自我阻塞
+    let pid = if MainThreadMarker::new().is_some() {
+        query()
+    } else {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<i32>(1);
+        if app
+            .run_on_main_thread(move || {
+                let _ = tx.send(query());
+            })
+            .is_err()
+        {
+            0
+        } else {
+            rx.recv_timeout(std::time::Duration::from_millis(500))
+                .unwrap_or(0)
+        }
+    };
     LAST_FRONT_APP_PID.store(pid, Ordering::SeqCst);
 }
 
@@ -147,7 +169,7 @@ pub fn cursor_global() -> Option<(f64, f64)> {
 }
 
 pub fn show_popover(app: &AppHandle) {
-    remember_front_app();
+    remember_front_app(app);
     activate_app();
     // 设置锁可能被毒化（极低概率），弹窗唤起不容失败：统一走容错取锁
     let mode = lock_settings(&app.state::<crate::commands::AppState>())
