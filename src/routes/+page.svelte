@@ -57,8 +57,15 @@
 
   let visibleEntries = $derived(applyFilter(entries));
 
-  async function refresh() {
+  // reset=true 用于弹窗唤起：选中归位到第一项（⏎ 直贴第一条的默认行为）。
+  // 默认保留当前选中（按 id），供新条目到达等场景使用，避免浏览被打断。
+  async function refresh(reset = false) {
     const next = await api.list(tab === 'pinned' ? 'pinned' : undefined);
+    if (reset) {
+      entries = next;
+      selected = applyFilter(next).length > 0 ? 0 : -1;
+      return;
+    }
     // 新条目到达时尽量保持当前选中项（按 id 而非固定归零），避免浏览中被打断
     const prevId = visibleEntries[selected]?.id ?? null;
     entries = next;
@@ -73,9 +80,17 @@
 
   async function switchTab(t: 'all' | 'pinned') {
     tab = t;
+    // 切换 Tab 时清空选中（-1 = 无选中）：新列表不默认选中第一项，
+    // 上个列表的选中项也不会被带过来触发 scrollIntoView 定位。
+    // 键盘 ↑↓ 仍可从无选中状态开始选择。
+    selected = -1;
     await refresh();
+    // 列表滚动归位：keyed each 复用/移动行节点会保留容器 scrollTop，
+    // 残留的滚动位置会让新列表一打开就停在中部。rAF 等 DOM 刷新后再归零。
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.list')?.scrollTo({ top: 0 });
+    });
   }
-
   function rowHeight(entry: Entry): number {
     return entry.type === 'image'
       ? Math.max(ROW_H, settings.image_preview_height + 12)
@@ -142,11 +157,11 @@
     return () => cancelAnimationFrame(raf);
   });
 
-  // 固定项被清空时回到「全部」Tab，避免停留在空的固定列表
+  // 固定项被清空时回到「全部」Tab，避免停留在空的固定列表。
+  // 统一走 switchTab：同样清空选中，不带任何定位。
   $effect(() => {
     if (tab === 'pinned' && pinnedCount === 0) {
-      tab = 'all';
-      void refresh();
+      void switchTab('all');
     }
   });
 
@@ -211,18 +226,20 @@
       popupFocused = focused;
       if (focused) {
         blurWhileHidden = false;
-        // 每次显示时重新加载设置与列表，保证外观修改立即生效
+        // 每次显示时重新加载设置与列表，保证外观修改立即生效；
+        // 选中归位第一项，上次会话遗留的无选中/中途选中不带到新唤起
         void api.getSettings().then((s) => (settings = s)).catch(() => {});
-        void refresh();
+        void refresh(true);
       } else {
         hideWindow();
       }
     });
     // 唤起即重读设置：macOS accessory 窗口的 Focused 事件不可靠，
-    // 仅靠 onFocusChanged 可能在设置改动后拿不到新值
+    // 仅靠 onFocusChanged 可能在设置改动后拿不到新值。
+    // 选中归位第一项，上次会话遗留的无选中/中途选中不带到新唤起。
     unListenShown = await listen('popover-shown', () => {
       void api.getSettings().then((s) => (settings = s)).catch(() => {});
-      void refresh();
+      void refresh(true);
     });
   });
 
@@ -247,10 +264,10 @@
       e.preventDefault();
       const cur = visibleEntries[selected];
       if (cur) {
-        void api.setPinned(cur.id, !cur.pinned).then(refresh);
+        void api.setPinned(cur.id, !cur.pinned).then(() => refresh());
       }
     } else if (e.key === 'Backspace' && visibleEntries[selected]) {
-      void api.delete(visibleEntries[selected].id).then(refresh);
+      void api.delete(visibleEntries[selected].id).then(() => refresh());
     } else if ((e.metaKey || e.ctrlKey) && e.key === '1') {
       void switchTab('all');
     } else if ((e.metaKey || e.ctrlKey) && e.key === '2') {
