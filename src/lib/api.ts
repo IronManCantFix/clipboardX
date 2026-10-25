@@ -56,7 +56,12 @@ export const api = {
   delete: (id: number) => invoke('delete_entry', { id }),
   paste: (id: number) => invoke('paste_entry', { id }),
   getSettings: () => invoke<Settings>('get_settings'),
-  positionPopover: () => invoke('position_popover'),
+  /**
+   * 重新钳位弹窗位置（锚点钳位，见后端 position_popover）。
+   * 传目标逻辑尺寸：setSize 异步生效，后端读不到未落盘的新尺寸。
+   */
+  positionPopover: (size?: { width: number; height: number }) =>
+    invoke('position_popover', { size: size ?? null }),
   getStorageStats: () => invoke<StorageStats>('get_storage_stats'),
   clearImages: () => invoke('clear_images'),
   clearHistory: () => invoke<number>('clear_history'),

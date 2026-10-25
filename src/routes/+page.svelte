@@ -38,6 +38,17 @@
 
   let unListenShown: (() => void) | undefined;
 
+  // 主动隐藏弹窗（统一入口）。
+  // blurWhileHidden：窗口隐藏期间 DOM blur 迟到的竞态——切 Tab 时渲染变更会
+  // 瞬时抢走输入焦点（与原生失焦叠加），若此刻 hide 已执行，迟到的 blur 事件
+  // 会把刚重新聚焦的窗口再藏一次。这里记录「我们主动 hide 过」，失焦监听器
+  // 看到标记后忽略该次 blur（onMount 中注册，见下方）。
+  let blurWhileHidden = false;
+  function hideWindow() {
+    blurWhileHidden = true;
+    void getCurrentWindow().hide();
+  }
+
   function applyFilter(list: Entry[]): Entry[] {
     return settings.search_enabled ? filterEntries(list, query, settings.search_mode) : list;
   }
@@ -73,7 +84,7 @@
 
   // 固定区域（搜索框 / Tab / 底部提示）的实际渲染高度，随开关自动变化
   function fixedHeight(): number {
-    let h = 10; // .list 上下 padding 4+4 + .pop 边框 1+1
+    let h = 12; // .list 上下 padding 4+6 + .pop 边框 1+1（与 app.css 的 .list 同步改）
     for (const sel of ['.search', '.tabs', '.foot']) {
       const el = document.querySelector<HTMLElement>(sel);
       if (el) h += el.offsetHeight;
@@ -101,7 +112,9 @@
         ? settings.window_height
         : fixedHeight() + listHeight();
     void win.setSize(new LogicalSize(width, height));
-    void api.positionPopover();
+    // 传目标尺寸做锚点钳位：切 Tab 等内容变化不会让窗口跟着鼠标跑，
+    // 且后端按最终尺寸钳位，贴屏幕底部时也不会伸出屏幕。
+    void api.positionPopover({ width, height });
   }
 
   $effect(() => {
@@ -184,17 +197,25 @@
       if (popupFocused) void refresh();
     });
     searchInput?.focus();
-    // 失焦自动隐藏（DOM blur + 窗口焦点事件双保险）
-    const onBlur = () => void win.hide();
+    // 失焦自动隐藏（DOM blur + 窗口焦点事件双保险）。
+    // blurWhileHidden 见 hideWindow 定义处：隐藏期间迟到的 blur 不再二次隐藏。
+    const onBlur = () => {
+      if (blurWhileHidden) {
+        blurWhileHidden = false;
+        return;
+      }
+      void win.hide();
+    };
     window.addEventListener('blur', onBlur);
     void win.onFocusChanged(({ payload: focused }) => {
       popupFocused = focused;
       if (focused) {
+        blurWhileHidden = false;
         // 每次显示时重新加载设置与列表，保证外观修改立即生效
         void api.getSettings().then((s) => (settings = s)).catch(() => {});
         void refresh();
       } else {
-        void win.hide();
+        hideWindow();
       }
     });
     // 唤起即重读设置：macOS accessory 窗口的 Focused 事件不可靠，
@@ -212,7 +233,7 @@
     const inSearch = (e.target as HTMLElement | null)?.tagName === 'INPUT';
     if (inSearch && e.key === 'Backspace') return;
     if (e.key === 'Escape') {
-      getCurrentWindow().hide();
+      hideWindow();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       selected = Math.min(selected + 1, visibleEntries.length - 1);
@@ -243,7 +264,7 @@
     } catch (err) {
       console.error('paste failed:', err);
     }
-    getCurrentWindow().hide();
+    hideWindow();
   }
 </script>
 

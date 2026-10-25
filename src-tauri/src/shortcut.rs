@@ -76,7 +76,9 @@ pub fn ax_check_and_prompt() -> bool {
 /// 唤起弹窗时记录的前台应用 pid，粘贴时用于把焦点还给它。
 static LAST_FRONT_APP_PID: AtomicI32 = AtomicI32::new(0);
 
-/// 唤起时记录的鼠标位置，用于弹窗避让定位。
+/// 唤起时记录的鼠标位置，作为本次弹窗的定位锚点。
+/// 之后该次会话内的 setSize/重新钳位都以此为准，不再跟随实时鼠标
+/// （否则弹窗内点击 Tab 时窗口会被拖走）。
 static LAST_CURSOR: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 
 /// 最近一次主动唤起弹窗的时间（毫秒），用于聚焦保护期判断。
@@ -175,14 +177,16 @@ pub fn show_popover(app: &AppHandle) {
     let mode = lock_settings(&app.state::<crate::commands::AppState>())
         .settings
         .position_mode;
-    if let Some(cursor) = cursor_global() {
+    // 记录唤起时刻的鼠标为本次定位锚点；后续 position_popover 复用此锚点
+    let anchor = cursor_global();
+    if let Some(cursor) = anchor {
         *LAST_CURSOR.lock().unwrap_or_else(|p| p.into_inner()) = Some(cursor);
     }
     if let Some(win) = app.get_webview_window("main") {
         if mode == PositionMode::Center {
             let _ = win.center();
         } else {
-            let _ = position_window(&win);
+            let _ = position_window(&win, anchor, None);
         }
         // 标记唤起保护期，并推迟 show/set_focus 到下一帧：
         // accessory app 在同一帧内 set_focus 无效，且窗口未聚焦会触发
@@ -208,37 +212,53 @@ fn main_pixels_high() -> f64 {
     unsafe { CGDisplayPixelsHigh(CGMainDisplayID()) as f64 }
 }
 
-/// 鼠标所在屏幕的全局 frame（AppKit 坐标：主屏左下为原点，副屏可为负坐标）。
-/// 遍历所有屏幕找到包含鼠标的那一个，多显示器下弹窗跟随鼠标所在屏幕。
-fn cursor_screen_frame() -> Option<(f64, f64, f64, f64)> {
+/// 指定点（AppKit 全局坐标）所在的屏幕 frame。找不到时回退主屏。
+fn screen_at_point(p: (f64, f64)) -> Option<(f64, f64, f64, f64)> {
     objc2::rc::autoreleasepool(|_| {
-        let p = objc2_app_kit::NSEvent::mouseLocation();
         let marker = MainThreadMarker::new()?;
         for screen in objc2_app_kit::NSScreen::screens(marker).iter() {
             let f = screen.frame();
             let (ox, oy, sw, sh) = (f.origin.x, f.origin.y, f.size.width, f.size.height);
-            if p.x >= ox && p.x < ox + sw && p.y >= oy && p.y < oy + sh {
+            if p.0 >= ox && p.0 < ox + sw && p.1 >= oy && p.1 < oy + sh {
                 return Some((ox, oy, sw, sh));
             }
         }
-        // 兜底：主屏
         let f = objc2_app_kit::NSScreen::mainScreen(marker)?.frame();
         Some((f.origin.x, f.origin.y, f.size.width, f.size.height))
     })
 }
 
-/// 将窗口定位到鼠标附近，超出鼠标所在屏幕边缘时自动向内避让（多显示器跟随鼠标）。
-fn position_window(win: &tauri::WebviewWindow) -> Result<(), String> {
-    let scale = win.scale_factor().map_err(|e| e.to_string())?;
-    let size = win.outer_size().map_err(|e| e.to_string())?;
-    let (w, h) = (size.width as f64 / scale, size.height as f64 / scale);
-    let Some((sx, sy, sw, sh)) = cursor_screen_frame() else {
+/// 将窗口定位到锚点附近，超出锚点所在屏幕边缘时自动向内避让。
+/// anchor 为唤起时刻的鼠标位置（AppKit 全局坐标，None 时用存储的 LAST_CURSOR）。
+/// 锚点钳位语义：以唤起时的鼠标为锚，只把窗口往屏幕内钳位，绝不重新跟随当前鼠标。
+/// 这样前端切换 Tab 触发 setSize + position_popover 时窗口不会跳到鼠标当前位置
+/// （切 Tab 时鼠标悬停在弹窗内，跟随语义会把窗口拖出屏幕甚至反转）。
+/// target_size 为前端即将 setSize 的目标逻辑尺寸（width, height）；setSize 是异步
+/// 派发到主队列的，此刻读 outer_size 仍是旧值，钳位计算需用最终尺寸。
+fn position_window(
+    win: &tauri::WebviewWindow,
+    anchor: Option<(f64, f64)>,
+    target_size: Option<(f64, f64)>,
+) -> Result<(), String> {
+    let (w, h) = match target_size {
+        Some((w, h)) => (w, h),
+        None => {
+            let scale = win.scale_factor().map_err(|e| e.to_string())?;
+            let size = win.outer_size().map_err(|e| e.to_string())?;
+            (size.width as f64 / scale, size.height as f64 / scale)
+        }
+    };
+    // 锚点：调用方显式传入的 anchor，否则回退唤起时记录的 LAST_CURSOR
+    // （position_popover 路径）。两者都不可用时放弃定位，保持原位。
+    let resolved = anchor
+        .or_else(|| *LAST_CURSOR.lock().unwrap_or_else(|p| p.into_inner()));
+    // 钳位所依据的屏幕：锚点所在屏（唤起时的鼠标屏），而非实时鼠标屏。
+    // 唤起后鼠标常已移动到弹窗内（可能横跨两屏），跟随实时鼠标会造成跨屏跳动。
+    let Some((sx, sy, sw, sh)) = resolved.and_then(screen_at_point) else {
         return Ok(());
     };
     let fallback = (sx + sw / 2.0, sy + sh / 2.0);
-    let cursor = cursor_global()
-        .or_else(|| *LAST_CURSOR.lock().unwrap_or_else(|p| p.into_inner()))
-        .unwrap_or(fallback);
+    let cursor = resolved.unwrap_or(fallback);
     // 换算成 tao 逻辑坐标（x 距主屏左缘，y 距主屏上缘；翻转常量与 tao 的 window_position 一致）
     let ph = main_pixels_high();
     let (mut x, mut y) = (cursor.0, ph - cursor.1);
@@ -261,8 +281,21 @@ fn position_window(win: &tauri::WebviewWindow) -> Result<(), String> {
 }
 
 /// 弹窗尺寸变化后重新定位（前端在 setSize 后调用）。居中模式不移动。
+///
+/// 定位语义为「锚点钳位」：以唤起弹窗时记录的鼠标锚点（LAST_CURSOR）为参考，
+/// 仅当窗口超出锚点所在屏幕边界时向内钳位，不重新读取实时鼠标位置。
+/// 此命令由前端在切换 Tab / 新条目导致高度变化时触发，此刻鼠标往往悬停在
+/// 弹窗内部的 Tab 按钮上——若跟随实时鼠标，窗口会跳到鼠标处（用户看到的
+/// 「切换剪贴板/固定时窗口位置变动」即此原因）。
+///
+/// `size`：前端即将 setSize 的目标逻辑尺寸。setSize 异步落盘到主队列，
+/// 此刻读取 outer_size 仍是旧值；传入目标尺寸才能按变化后的窗口做正确的
+/// 边缘钳位（否则窗口贴屏幕底部时先按旧尺寸钳位、再撑大，会伸出屏幕）。
 #[tauri::command]
-pub fn position_popover(app: tauri::AppHandle) -> Result<(), String> {
+pub fn position_popover(
+    app: tauri::AppHandle,
+    size: Option<SizeArg>,
+) -> Result<(), String> {
     let mode = lock_settings(&app.state::<crate::commands::AppState>())
         .settings
         .position_mode;
@@ -270,9 +303,16 @@ pub fn position_popover(app: tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
     if let Some(win) = app.get_webview_window("main") {
-        position_window(&win)?;
+        position_window(&win, None, size.map(|s| (s.width, s.height)))?;
     }
     Ok(())
+}
+
+/// 前端传入的目标逻辑尺寸（position_popover 的 size 参数）。
+#[derive(serde::Deserialize)]
+pub struct SizeArg {
+    pub width: f64,
+    pub height: f64,
 }
 
 pub fn shortcut_handler() -> impl Fn(&AppHandle, &Shortcut, ShortcutEvent) + Send + Sync + 'static {
